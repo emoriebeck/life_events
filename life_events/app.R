@@ -48,8 +48,8 @@ ui <- fluidPage(
     tabPanel("Selection Effects", 
              sidebarLayout(
                sidebarPanel(
-                 selectizeInput("covs", label = "Choose Covariates",
-                                choices = ""),
+                 radioButtons("set", label = "Choose Matching Set",
+                                choices = c("Unmatched", "Matched")),
                  checkboxGroupInput("traits",
                                     "Choose Trait:",
                                     choices = c("E", "A", "C", "N", "O"),
@@ -58,22 +58,22 @@ ui <- fluidPage(
                                     choices = "")
                ),
                mainPanel(
-                 plotOutput("corPlots")
+                 plotOutput("selPlots")
                ))),
     tabPanel("Socialization Effects", 
              sidebarLayout(
                sidebarPanel(
-                 selectizeInput("covs", label = "Choose Covariates",
+                 selectizeInput("pars", label = "Choose Parameters",
                                 choices = ""),
-                 checkboxGroupInput("traits",
+                 checkboxGroupInput("traits3",
                                     "Choose Trait:",
                                     choices = c("E", "A", "C", "N", "O"),
                                     selected = "E"),
-                 checkboxGroupInput("events", label = "Choose Events", 
+                 checkboxGroupInput("events3", label = "Choose Events", 
                                     choices = "")
                ),
                mainPanel(
-                 plotOutput("corPlots")
+                 plotOutput("socPlots")
                ))),
     wellPanel(
       helpText(   a("Lab Website",     href="http://pmdlab.wustl.edu/beck/projects/networks.html")
@@ -87,9 +87,12 @@ library(psych)
 library(brms)
 library(bayesplot)
 library(tidybayes)
+library(ggridges)
 library(tidyverse)
 
 load(url("https://github.com/emoriebeck/life_events/raw/master/data.RData"))
+load(url("https://github.com/emoriebeck/life_events/raw/master/selection_samples.RData"))
+load(url("https://github.com/emoriebeck/life_events/raw/master/growth_samples.RData"))
 
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
@@ -101,6 +104,21 @@ server <- function(input, output, session) {
       covs <- unique(match.dat$new_name)
       updateSelectizeInput(session, 'covs', choices = c("", covs),
                            selected = covs[1])
+  })
+  
+  observe({
+    events <- unique(le_dat$Event)
+    updateCheckboxGroupInput(session, 'events2', choices = c(events),
+                             selected = events[1:2])
+  })
+  
+  observe({
+    events <- unique(le_dat$Event)
+    updateCheckboxGroupInput(session, 'events3', choices = c(events),
+                             selected = events[1:2])
+    pars <- unique(growth_samples$term)
+    updateSelectizeInput(session, 'pars', choices = c(pars),
+                         selected = pars[1])
   })
   
   
@@ -122,6 +140,52 @@ server <- function(input, output, session) {
        theme_classic()
       # generate bins based on input$bins from ui.R
       
+   })
+
+   output$selPlots <- renderPlot({
+     df <- growth_samples %>% 
+       filter(Trait %in% input$traits3 & Event %in% input$events2 & match_set %in% input$set)
+     
+     df %>% 
+       ggplot(aes(y = Event, x = estimate)) +
+       geom_density_ridges(aes(fill = Trait), alpha= .4, scale = .8, 
+                           rel_min_height = 0.025) +
+       stat_pointintervalh(aes(color = Trait), .prob = c(.66, .95)) +
+       theme_classic() +
+       theme(legend.position = "bottom")
+     
+     bfi_samples %>% full_join(bfi_qi %>% select(Event:term, sig)) %>%
+       ggplot(aes(y = Event, x = estimate)) +
+       geom_vline(aes(xintercept = 1), linetype = "dashed") +
+       # geom_density_ridges(aes(fill = match), alpha= .4, scale = .8, rel_min_height = 0.005) +
+       geom_density_ridges(data = . %>% filter(match == "Unmatched" & sig == "sig"), alpha= .4, scale = .8, rel_min_height = 0.025, fill = "red") +
+       # geom_density_ridges(data = . %>% filter(match == "Unmatched" & sig == "ns"), alpha= .4, scale = .8, rel_min_height = 0.025, fill = "gray40") +
+       stat_pointintervalh(data = . %>% filter(match == "Unmatched" & sig == "sig"), .prob = c(.66, .95)) +
+       # geom_text(data = bfi_qi %>% filter(match == "Matched"), aes(x = 1.4, color = match, label = sprintf("%.2f [%.2f, %.2f]", estimate, conf.low, conf.high)), nudge_y = .3) +
+       # geom_text(data = bfi_qi %>% filter(match == "Unmatched"), aes(x = 1.4, color = match, label = sprintf("%.2f [%.2f, %.2f]", estimate, conf.low, conf.high)), nudge_y = -.1) +
+       # geom_intervalh(data = bfi_qi, aes(xmin = conf.low, xmax = conf.high)) +
+       # coord_flip()+
+       labs(x = "OR", y = NULL, fill = NULL, color = NULL) +
+       facet_wrap(~Trait, nrow = 1) +
+       theme_classic() +
+       theme(legend.position = "bottom",
+             axis.text = element_text(face = "bold", size = rel(1.2)),
+             strip.text = element_text(face = "bold", size = rel(2)),
+             axis.title = element_text(face = "bold", size = rel(1.2)),
+             legend.text = element_text(face = "bold", size = rel(1.2)))
+   })
+      
+   output$socPlots <- renderPlot({
+     df <- growth_samples %>% 
+       filter(Trait %in% input$traits3 & Event %in% input$events3 & term %in% input$pars)
+     
+     df %>% 
+       ggplot(aes(y = Event, x = estimate)) +
+       geom_density_ridges(aes(fill = Trait), alpha= .4, scale = .8, 
+              rel_min_height = 0.025) +
+       stat_pointintervalh(aes(color = Trait), .prob = c(.66, .95)) +
+       theme_classic() +
+       theme(legend.position = "bottom")
    })
 }
 
