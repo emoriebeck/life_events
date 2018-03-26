@@ -49,8 +49,14 @@ ui <- fluidPage(
     tabPanel("Socialization Effects", 
              sidebarLayout(
                sidebarPanel(
-                 selectizeInput("pars", label = "Choose Parameters",
-                                choices = ""),
+                 selectizeInput("plot", label = "Choose Plot Type:",
+                                choices = c("Trajectories", "Posterior Distributions")),
+                 
+                 conditionalPanel(
+                   condition = "input.plot != 'Trajectories'",
+                   selectizeInput("pars", label = "Choose Parameters",
+                                  choices = "")
+                 ),
                  checkboxGroupInput("traits3",
                                     "Choose Trait:",
                                     choices = c("E", "A", "C", "N", "O"),
@@ -164,16 +170,39 @@ server <- function(input, output, session) {
    })
       
    output$socPlots <- renderPlot({
-     df <- growth_samples %>% 
-       filter(Trait %in% input$traits3 & Event %in% input$events3 & term %in% input$pars)
-     
-     df %>% 
-       ggplot(aes(y = Event, x = estimate)) +
-       geom_density_ridges(aes(fill = Trait), alpha= .4, scale = .8, 
-              rel_min_height = 0.025) +
-       stat_pointintervalh(aes(color = Trait), .prob = c(.66, .95)) +
-       theme_classic() +
-       theme(legend.position = "bottom")
+     if (input$plot != "Trajectories"){
+       df <- growth_samples %>% 
+         filter(Trait %in% input$traits3 & Event %in% input$events3 & term %in% input$pars)
+       
+       df %>% 
+         ggplot(aes(y = Event, x = estimate)) +
+         geom_density_ridges(aes(fill = Trait), alpha= .4, scale = .8, 
+                rel_min_height = 0.025) +
+         stat_pointintervalh(aes(color = Trait), .prob = c(.66, .95)) +
+         theme_classic() +
+         theme(legend.position = "bottom")
+     } else{
+       df <- growth_pred %>% filter(Trait %in% input$traits3 & Event %in% input$events3)
+       rdf <- range_act %>% filter(Trait %in% input$traits3 & Event %in% input$events3)
+       df %>%
+         ggplot(aes(x = new.wave + 1, y = Estimate)) +
+         scale_x_continuous(limits = c(1,3), breaks = seq(1,3,1)) +
+         scale_color_manual(values = c(color, "black")) +
+         geom_ribbon(aes(ymin = `2.5%ile`, ymax = `97.5%ile`, group = le_value), fill = "lightblue", alpha = .25) +
+         geom_line(aes(color = factor(le_value), linetype = factor(le_value)), size = 1) +
+         geom_blank(data = rdf) +
+         labs(x = "Wave", y = "Predicted Personality Rating",
+              color = "Life Event", title = trait, linetype = "Life Event") +
+         facet_grid(Trait ~ Event, scales = "free") +
+         theme_classic() +
+         theme(axis.text = element_text(face = "bold"),
+               axis.title = element_text(face = "bold", size = rel(1.2)),
+               legend.position = "bottom",
+               legend.text = element_text(face = "bold"),
+               legend.title = element_text(face = "bold", size = rel(1.2)),
+               strip.text = element_text(face = "bold", size = rel(.8)),
+               plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
+     }
    })
 }
 
