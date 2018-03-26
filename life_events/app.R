@@ -54,7 +54,7 @@ ui <- fluidPage(
                  checkboxGroupInput("traits3",
                                     "Choose Trait:",
                                     choices = c("E", "A", "C", "N", "O"),
-                                    selected = "E"),
+                                    selected = c("E", "A", "C", "N", "O")),
                  checkboxGroupInput("events3", label = "Choose Events", 
                                     choices = "")
                ),
