@@ -70,7 +70,7 @@ ui <- fluidPage(
                  tabPanel("Raw Data", 
                           sidebarLayout(
                             sidebarPanel(
-                              selectizeInput("covs", label = "Choose Covariates",
+                              selectizeInput("cat", label = "Choose Matching Category",
                                              choices = ""),
                               checkboxGroupInput("traits",
                                                  "Choose Trait:",
@@ -97,7 +97,7 @@ library(tidybayes)
 library(ggridges)
 library(tidyverse)
 
-load(url("https://github.com/emoriebeck/life_events/raw/master/data.RData"))
+load(url("https://github.com/emoriebeck/life_events/raw/master/mean_diff.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/selection_samples.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/growth_samples.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/growth_pred.RData"))
@@ -108,10 +108,10 @@ server <- function(input, output, session) {
   observe({
       events <- unique(le_dat$Event)
       updateCheckboxGroupInput(session, 'events', choices = c(events),
-                               selected = events[1:2])
-      covs <- unique(match.dat$new_name)
-      updateSelectizeInput(session, 'covs', choices = c("", covs),
-                           selected = covs[1])
+                               selected = events[1:5])
+      cats <- unique(match.dat$new_name)
+      updateSelectizeInput(session, 'cat', choices = c("", cats),
+                           selected = "BFI")
   })
   
   observe({
@@ -131,21 +131,29 @@ server <- function(input, output, session) {
   
   
    output$corPlots <- renderPlot({
-     df <- match.dat %>% filter(new_name %in% input$covs) %>% 
-       full_join(le_dat %>% select(Event, PROC_SID, le.group) %>%
-                   filter(Event %in% input$events)) %>%
-       full_join(bfi_long %>% filter(Trait %in% input$traits)) %>%
-       filter(!is.na(le.group) & !is.na(value) & !is.na(pers_value) & wave == "T1")
+     df <- diff %>% unnest(d, .drop = T) %>% 
+       filter(Category == input$cat & Event %in% input$events)
      
-     samp <- sample(unique(df$PROC_SID),200)
-     
-     df %>% ggplot(aes(x = pers_value, y = value)) +
-       geom_jitter(data = . %>% filter(PROC_SID %in% samp), aes(shape = factor(le.group))) +
-       geom_smooth(aes(color = factor(le.group)), method = "lm", se = F) +
-       labs(x = "Personality", y = input$covs, color = "Event",
-            title = input$covs, shape = "Event") +
-       facet_grid(Event~Trait)+
-       theme_classic()
+     df %>%
+       group_by(Event, match_set, var) %>%
+       summarize(d = mean(d)) %>% ungroup() %>%
+       mutate(match_set = recode(match_set, `socialization` = "Matched")) %>%
+       ggplot(aes(x = var, y = d, shape = match_set)) +
+       scale_shape_manual(values = c(19,1)) +
+       scale_y_continuous(limits = c(-1.5, 1.5), breaks = seq(-1, 1, 1)) +
+       geom_hline(aes(yintercept = 0), linetype = "dashed", size = .5) +
+       geom_point(size = 1) +
+       labs(y = "Cohen's d", x = NULL, shape = NULL) +
+       coord_flip() +
+       facet_grid(.~Event) +
+       theme_classic() +
+       theme(legend.position = "bottom",
+             axis.text.y = element_text(face = "bold"),
+             axis.text.x = element_text(face = "bold", size = rel(1.2)),
+             axis.title = element_text(face = "bold", size = rel(1.2)),
+             strip.text = element_text(face = "bold"),
+             legend.text = element_text(face = "bold"),
+             legend.title = element_text(face = "bold", size = rel(1.2)))
       # generate bins based on input$bins from ui.R
       
    })
