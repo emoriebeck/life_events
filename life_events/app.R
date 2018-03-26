@@ -67,7 +67,7 @@ ui <- fluidPage(
                mainPanel(
                  plotOutput("socPlots")
                ))),
-                 tabPanel("Raw Data", 
+                 tabPanel("Matching", 
                           sidebarLayout(
                             sidebarPanel(
                               selectizeInput("cat", label = "Choose Matching Category",
@@ -192,13 +192,13 @@ server <- function(input, output, session) {
        df %>%
          ggplot(aes(x = new.wave + 1, y = Estimate)) +
          scale_x_continuous(limits = c(1,3), breaks = seq(1,3,1)) +
-         scale_color_manual(values = c(color, "black")) +
+         scale_color_manual(values = c("royalblue", "black")) +
          geom_ribbon(aes(ymin = `2.5%ile`, ymax = `97.5%ile`, group = le_value), fill = "lightblue", alpha = .25) +
          geom_line(aes(color = factor(le_value), linetype = factor(le_value)), size = 1) +
          geom_blank(data = rdf) +
          labs(x = "Wave", y = "Predicted Personality Rating",
               color = "Life Event", linetype = "Life Event") +
-         facet_grid(Trait ~ Event, scales = "free") +
+         facet_grid(Event ~ Trait, scales = "free") +
          theme_classic() +
          theme(axis.text = element_text(face = "bold"),
                axis.title = element_text(face = "bold", size = rel(1.2)),
