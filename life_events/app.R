@@ -30,31 +30,17 @@ ui <- fluidPage(
   #titlePanel("Idiographic Personality Networks"),
   # Sidebar with a slider input for number of bins 
   tabsetPanel(
-    tabPanel("Raw Data", 
-             sidebarLayout(
-               sidebarPanel(
-                 selectizeInput("covs", label = "Choose Covariates",
-                                choices = ""),
-                 checkboxGroupInput("traits",
-                                "Choose Trait:",
-                                choices = c("E", "A", "C", "N", "O"),
-                                selected = "E"),
-                 checkboxGroupInput("events", label = "Choose Events", 
-                                    choices = "")
-               ),
-               mainPanel(
-                 plotOutput("corPlots")
-               ))),
     tabPanel("Selection Effects", 
              sidebarLayout(
                sidebarPanel(
-                 radioButtons("set", label = "Choose Matching Set",
-                                choices = c("Unmatched", "Matched")),
-                 checkboxGroupInput("traits",
+                 checkboxGroupInput("set", label = "Choose Matching Set",
+                                choices = c("Unmatched", "Matched"),
+                                selected = "Matched"),
+                 checkboxGroupInput("traits2",
                                     "Choose Trait:",
                                     choices = c("E", "A", "C", "N", "O"),
-                                    selected = "E"),
-                 checkboxGroupInput("events", label = "Choose Events", 
+                                    selected = c("E", "A", "C", "N", "O")),
+                 checkboxGroupInput("events2", label = "Choose Events", 
                                     choices = "")
                ),
                mainPanel(
@@ -75,6 +61,21 @@ ui <- fluidPage(
                mainPanel(
                  plotOutput("socPlots")
                ))),
+                 tabPanel("Raw Data", 
+                          sidebarLayout(
+                            sidebarPanel(
+                              selectizeInput("covs", label = "Choose Covariates",
+                                             choices = ""),
+                              checkboxGroupInput("traits",
+                                                 "Choose Trait:",
+                                                 choices = c("E", "A", "C", "N", "O"),
+                                                 selected = "E"),
+                              checkboxGroupInput("events", label = "Choose Events", 
+                                                 choices = "")
+                            ),
+                            mainPanel(
+                              plotOutput("corPlots")
+                            ))),
     wellPanel(
       helpText(   a("Lab Website",     href="http://pmdlab.wustl.edu/beck/projects/networks.html")
       )
@@ -143,28 +144,15 @@ server <- function(input, output, session) {
    })
 
    output$selPlots <- renderPlot({
-     df <- growth_samples %>% 
-       filter(Trait %in% input$traits3 & Event %in% input$events2 & match_set %in% input$set)
+     df <- bfi_samples %>% 
+       filter(Trait %in% input$traits2 & Event %in% input$events2 & match %in% input$set)
      
      df %>% 
        ggplot(aes(y = Event, x = estimate)) +
-       geom_density_ridges(aes(fill = Trait), alpha= .4, scale = .8, 
-                           rel_min_height = 0.025) +
-       stat_pointintervalh(aes(color = Trait), .prob = c(.66, .95)) +
-       theme_classic() +
-       theme(legend.position = "bottom")
-     
-     bfi_samples %>% full_join(bfi_qi %>% select(Event:term, sig)) %>%
-       ggplot(aes(y = Event, x = estimate)) +
        geom_vline(aes(xintercept = 1), linetype = "dashed") +
-       # geom_density_ridges(aes(fill = match), alpha= .4, scale = .8, rel_min_height = 0.005) +
-       geom_density_ridges(data = . %>% filter(match == "Unmatched" & sig == "sig"), alpha= .4, scale = .8, rel_min_height = 0.025, fill = "red") +
-       # geom_density_ridges(data = . %>% filter(match == "Unmatched" & sig == "ns"), alpha= .4, scale = .8, rel_min_height = 0.025, fill = "gray40") +
-       stat_pointintervalh(data = . %>% filter(match == "Unmatched" & sig == "sig"), .prob = c(.66, .95)) +
-       # geom_text(data = bfi_qi %>% filter(match == "Matched"), aes(x = 1.4, color = match, label = sprintf("%.2f [%.2f, %.2f]", estimate, conf.low, conf.high)), nudge_y = .3) +
-       # geom_text(data = bfi_qi %>% filter(match == "Unmatched"), aes(x = 1.4, color = match, label = sprintf("%.2f [%.2f, %.2f]", estimate, conf.low, conf.high)), nudge_y = -.1) +
-       # geom_intervalh(data = bfi_qi, aes(xmin = conf.low, xmax = conf.high)) +
-       # coord_flip()+
+       geom_density_ridges(aes(fill = match), alpha= .4, scale = .8, 
+                           rel_min_height = 0.025) +
+       stat_pointintervalh(aes(color = match), .prob = c(.66, .95)) +
        labs(x = "OR", y = NULL, fill = NULL, color = NULL) +
        facet_wrap(~Trait, nrow = 1) +
        theme_classic() +
