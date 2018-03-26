@@ -187,8 +187,8 @@ server <- function(input, output, session) {
          theme_classic() +
          theme(legend.position = "bottom")
      } else{
-       df <- growth_pred %>% filter(Trait %in% input$traits3 & Event %in% input$events3)
-       rdf <- range_act %>% filter(Trait %in% input$traits3 & Event %in% input$events3)
+       df <- growth_pred %>% filter(shrt_Trait %in% input$traits3 & shrt_Event %in% input$events3)
+       rdf <- range_act %>% filter(shrt_Trait %in% input$traits3 & shrt_Event %in% input$events3)
        df %>%
          ggplot(aes(x = new.wave + 1, y = Estimate)) +
          scale_x_continuous(limits = c(1,3), breaks = seq(1,3,1)) +
