@@ -97,7 +97,7 @@ library(tidybayes)
 library(ggridges)
 library(tidyverse)
 
-load(url("https://github.com/emoriebeck/life_events/blob/master/mean_diff.RData?raw=true"))
+load(url("https://github.com/emoriebeck/life_events/raw/master/mean_diff.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/selection_samples.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/growth_samples.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/growth_pred.RData"))
