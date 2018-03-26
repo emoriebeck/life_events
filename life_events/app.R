@@ -100,6 +100,7 @@ library(tidyverse)
 load(url("https://github.com/emoriebeck/life_events/raw/master/data.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/selection_samples.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/growth_samples.RData"))
+load(url("https://github.com/emoriebeck/life_events/raw/master/growth_pred.RData"))
 
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
