@@ -22,7 +22,7 @@ ui <- fluidPage(
        style = "font-family: 'Source Sans Pro';
        color: #fff; text-align: center;
        background-color:#6A51A3;
-       padding: 20px"), href="http://pmdlab.wustl.edu/beck/projects/networks.html"),
+       padding: 20px"), href="http://pmdlab.wustl.edu/projects/networks.html"),
   
   
   br(),
@@ -72,10 +72,6 @@ ui <- fluidPage(
                             sidebarPanel(
                               selectizeInput("cat", label = "Choose Matching Category",
                                              choices = ""),
-                              checkboxGroupInput("traits",
-                                                 "Choose Trait:",
-                                                 choices = c("E", "A", "C", "N", "O"),
-                                                 selected = "E"),
                               checkboxGroupInput("events", label = "Choose Events", 
                                                  choices = "")
                             ),
@@ -97,7 +93,7 @@ library(tidybayes)
 library(ggridges)
 library(tidyverse)
 
-load(url("https://github.com/emoriebeck/life_events/raw/master/mean_diff.RData"))
+load(url("https://github.com/emoriebeck/life_events/blob/master/mean_diff.RData?raw=true"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/selection_samples.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/growth_samples.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/growth_pred.RData"))
@@ -106,22 +102,22 @@ load(url("https://github.com/emoriebeck/life_events/raw/master/growth_pred.RData
 server <- function(input, output, session) {
    
   observe({
-      events <- unique(le_dat$Event)
+      events <- unique(diff$Event)
       updateCheckboxGroupInput(session, 'events', choices = c(events),
                                selected = events[1:5])
-      cats <- unique(match.dat$new_name)
+      cats <- unique(diff$Category)
       updateSelectizeInput(session, 'cat', choices = c("", cats),
                            selected = "BFI")
   })
   
   observe({
-    events <- unique(le_dat$Event)
+    events <- unique(diff$Event)
     updateCheckboxGroupInput(session, 'events2', choices = c(events),
                              selected = events[1:2])
   })
   
   observe({
-    events <- unique(le_dat$Event)
+    events <- unique(diff$Event)
     updateCheckboxGroupInput(session, 'events3', choices = c(events),
                              selected = events[1:2])
     pars <- unique(growth_samples$term)
@@ -142,7 +138,7 @@ server <- function(input, output, session) {
        scale_shape_manual(values = c(19,1)) +
        scale_y_continuous(limits = c(-1.5, 1.5), breaks = seq(-1, 1, 1)) +
        geom_hline(aes(yintercept = 0), linetype = "dashed", size = .5) +
-       geom_point(size = 1) +
+       geom_point(size = 3) +
        labs(y = "Cohen's d", x = NULL, shape = NULL) +
        coord_flip() +
        facet_grid(.~Event) +
@@ -165,7 +161,7 @@ server <- function(input, output, session) {
      df %>% 
        ggplot(aes(y = Event, x = estimate)) +
        geom_vline(aes(xintercept = 1), linetype = "dashed") +
-       geom_density_ridges(aes(fill = match), alpha= .4, scale = .8, 
+       geom_density_ridges(aes(fill = match), alpha= .4, scale = .5, 
                            rel_min_height = 0.025) +
        stat_pointintervalh(aes(color = match), .prob = c(.66, .95)) +
        labs(x = "OR", y = NULL, fill = NULL, color = NULL) +
@@ -201,7 +197,7 @@ server <- function(input, output, session) {
          geom_line(aes(color = factor(le_value), linetype = factor(le_value)), size = 1) +
          geom_blank(data = rdf) +
          labs(x = "Wave", y = "Predicted Personality Rating",
-              color = "Life Event", title = trait, linetype = "Life Event") +
+              color = "Life Event", linetype = "Life Event") +
          facet_grid(Trait ~ Event, scales = "free") +
          theme_classic() +
          theme(axis.text = element_text(face = "bold"),

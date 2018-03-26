@@ -1,0 +1,12 @@
+name: life_events
+title: life_events
+username:
+account: emoriebeck
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 308942
+bundleId: 1289052
+url: https://emoriebeck.shinyapps.io/life_events/
+when: 1522092041.27338
+asMultiple: FALSE
+asStatic: FALSE
