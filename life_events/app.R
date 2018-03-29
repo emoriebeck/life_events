@@ -53,7 +53,7 @@ ui <- fluidPage(
                                 choices = c("Trajectories", "Posterior Distributions", "Group Differences")),
                  
                  conditionalPanel(
-                   condition = "input.plot != 'Trajectories'",
+                   condition = "input.plot == 'Posterior Distributions'",
                    selectizeInput("pars", label = "Choose Parameters",
                                   choices = "")
                  ),
@@ -101,7 +101,6 @@ load(url("https://github.com/emoriebeck/life_events/raw/master/plot_files.RData"
 
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
-   
   observe({
       events <- unique(diff$Event)
       updateCheckboxGroupInput(session, 'events', choices = c(events),
@@ -177,7 +176,7 @@ server <- function(input, output, session) {
       
    output$socPlots <- renderPlot({
      if (input$plot == "Posterior Distributions"){
-       df <- growth_samples %>% 
+       df <- growth_samples %>% tbl_df %>%
          filter(Trait %in% input$traits3 & Event %in% input$events3 & term %in% input$pars)
        
        df %>% 
@@ -210,31 +209,38 @@ server <- function(input, output, session) {
                plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
      } else {
        color = "gray"
-       p <- slopes %>% filter(Trait %in% input$traits3 & Event %in% input$events3) %>% filter(!is.na(Event)) %>%
+       df.sl <-  slopes %>% filter(shrt_Trait %in% input$traits3 & shrt_Event %in% input$events3) %>% 
+         filter(!is.na(Event))
+       df.rs <- ranef_slopes %>% filter(shrt_Trait %in% input$traits3 & shrt_Event %in% input$events3) %>% 
+         filter(!is.na(Event))
+       df.rects <- rects %>% filter(shrt_Trait %in% input$traits3 & shrt_Event %in% input$events3) %>% 
+         filter(!is.na(Event))
+       
+       p <- df.sl %>%
          ggplot(aes(x = term2, y = b)) +
          scale_y_continuous(limits = c(-.3,.3), breaks = seq(-.3,3,.3)) +
-         geom_violin(data = ranef_slopes %>% filter(Trait == trait & sig == "ns" & term == "No Event"),
+         geom_violin(data = df.rs %>% filter(sig == "ns" & term == "No Event"),
                      aes(x = 0), color = NA, fill = color, alpha = .3) +
-         geom_violin(data = ranef_slopes %>% filter(Trait == trait & sig == "ns" & term == "Event"),
+         geom_violin(data = df.rs %>% filter(sig == "ns" & term == "Event"),
                      aes(x = 1), color = NA, fill = color, alpha = .3) +
          scale_shape_manual(values = c(15, 17)) +
          geom_errorbar(data = . %>% filter(sig == "ns"), aes(ymin = lower, ymax = upper), width = .2) +
-         geom_point(data = slopes %>% filter(Trait == trait & sig == "ns" ),
+         geom_point(data = . %>% filter(sig == "ns" ),
                     aes(shape = term), color = color, size = 2) + #shape = 15, 
-         geom_point(data = slopes %>% filter(Trait == trait & sig == "ns" & term == "No Event"),
+         geom_point(data = . %>% filter(sig == "ns" & term == "No Event"),
                     aes(shape = term), color = "black", size = 2, shape = 2) +
-         geom_point(data = slopes %>% filter(Trait == trait & sig == "ns" & term == "Event"),
+         geom_point(data = . %>% filter(sig == "ns" & term == "Event"),
                     aes(shape = term), color = "black", size = 2, shape = 0) +
-         geom_label(data = slopes %>% filter(Trait == trait & sig == "ns"),
+         geom_label(data = . %>% filter(sig == "ns"),
                     aes(y = -.27, label = ifelse(abs(b) < .001, round(b, 4), 
                                                  ifelse(abs(b) < .01, round(b,3), round(b,2)))), 
                     fill = color, color = "black", size = 3) +
-         geom_label(data = slopes %>% filter(Trait == trait & sig == "ns" & term == "Event"),
+         geom_label(data = . %>% filter(sig == "ns" & term == "Event"),
                     aes(y = .27, label = paste("d =", ifelse(abs(d) < .001, round(d, 4), 
                                                              ifelse(abs(d) < .01, round(d,3), round(d,2))), sep = " ")), 
                     fill = color, color = "black", size = 3, nudge_x = -.5) +
-         labs(x = NULL, y = "Estimate", title = trait, shape = NULL) +
-         facet_wrap(~Event, nrow = 2) +
+         labs(x = NULL, y = "Estimate", shape = NULL) +
+         facet_grid(Event~Trait) +
          theme_classic() +
          theme(legend.position = "bottom",
                axis.text = element_text(face = "bold", size = rel(1.2)),
@@ -245,32 +251,33 @@ server <- function(input, output, session) {
                legend.text = element_text(face = "bold"),
                legend.title = element_text(face = "bold", size = rel(1.2)),
                plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
-       if(any((slopes %>% filter(Trait == trait))$sig == "sig")){
+       if(any(df.sl$sig == "sig")){
          p+
-           geom_rect(data = rects %>% filter(sig == "sig" & Trait == trait), fill = "yellow", alpha = .5,
+           geom_rect(data = df.rects %>% filter(sig == "sig"), fill = "yellow", alpha = .5,
                      aes(xmin = -.5, xmax = 1.5, ymin = -Inf, ymax = Inf)) +
-           geom_violin(data = ranef_slopes %>% filter(Trait == trait & sig == "sig" & term == "No Event"), aes(x = 0),
+           geom_violin(data = df.rs %>% filter(sig == "sig" & term == "No Event"), aes(x = 0),
                        fill = "royalblue", color = NA, alpha = .3) +
-           geom_violin(data = ranef_slopes %>% filter(Trait == trait & sig == "sig" & term == "Event"), aes(x = 1),
+           geom_violin(data = df.rs %>% filter(sig == "sig" & term == "Event"), aes(x = 1),
                        fill = "royalblue", color = NA, alpha = .3) +
            geom_errorbar(data = . %>% filter(sig == "sig"), aes(ymin = lower, ymax = upper), width = .2) +
-           geom_point(data = slopes %>% filter(Trait == trait & sig == "sig"),
+           geom_point(data = . %>% filter(sig == "sig"),
                       aes(shape = term), color = "royalblue", size = 2) + #, shape = 15
-           geom_point(data = slopes %>% filter(Trait == trait & sig == "sig" & term == "No Event"),
+           geom_point(data = . %>% filter(sig == "sig" & term == "No Event"),
                       aes(shape = term), color = "black", size = 2, shape = 2) +
-           geom_point(data = slopes %>% filter(Trait == trait & sig == "sig" & term == "Event"),
+           geom_point(data = . %>% filter(sig == "sig" & term == "Event"),
                       aes(shape = term), color = "black", size = 2, shape = 0) +
-           geom_label(data = slopes %>% filter(Trait == trait & sig == "sig"),
+           geom_label(data = . %>% filter(sig == "sig"),
                       aes(y = -.27, label = ifelse(abs(b) < .001, round(b, 4), 
                                                    ifelse(abs(b) < .01, round(b,3), round(b,2)))), 
                       fill = "royalblue", color = "white", size = 3) +
-           geom_label(data = slopes %>% filter(Trait == trait & sig == "sig" & term == "Event"),
+           geom_label(data = . %>% filter(sig == "sig" & term == "Event"),
                       aes(y = .27, label = paste("d =", ifelse(abs(b) < .001, round(b, 4), 
                                                                ifelse(abs(b) < .01, round(b,3), round(b,2))), sep = " ")), 
                       fill = "royalblue", color = "white", size = 3, nudge_x = -.5)
        }
      }
-   })
+   }, height = reactive({ifelse(input$plot == "Group Differences", 150 * length(input$events3), 100 * length(input$events3)) })
+   )
 }
 
 # Run the application 
