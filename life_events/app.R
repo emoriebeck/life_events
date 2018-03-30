@@ -159,17 +159,21 @@ server <- function(input, output, session) {
        filter(Trait %in% input$traits2 & Event %in% input$events2 & match %in% input$set)
      
      df %>% 
-       ggplot(aes(y = Event, x = estimate)) +
+       ggplot(aes(y = match, x = estimate)) +
+       scale_colour_manual(values = rep("black", length(unique(input$traits2)))) +
+       scale_fill_manual(values = c("#ac95f6", "#fffb98")[1:length(unique(input$set))]) +
        geom_vline(aes(xintercept = 1), linetype = "dashed") +
-       geom_density_ridges(aes(fill = match), alpha= .4, scale = .5, 
-                           rel_min_height = 0.025) +
-       stat_pointintervalh(aes(color = match), .prob = c(.66, .95)) +
+       geom_density_ridges(aes(fill = match), #alpha= .4, #scale = .5, 
+                           rel_min_height = 0.0025) +
+       stat_pointintervalh(aes(color = match), .prob = c(.66, .95), size = 1) +
        labs(x = "OR", y = NULL, fill = NULL, color = NULL) +
-       facet_wrap(~Trait, nrow = 1) +
+       facet_grid(Event~Trait) +
        theme_classic() +
        theme(legend.position = "bottom",
              axis.text = element_text(face = "bold", size = rel(1.2)),
-             strip.text = element_text(face = "bold", size = rel(2)),
+             axis.text.y = element_blank(),
+             strip.text.x = element_text(face = "bold", size = rel(2)),
+             strip.text.y = element_text(face = "bold", size = rel(.7)),
              axis.title = element_text(face = "bold", size = rel(1.2)),
              legend.text = element_text(face = "bold", size = rel(1.2)))
    })
@@ -180,10 +184,12 @@ server <- function(input, output, session) {
          filter(Trait %in% input$traits3 & Event %in% input$events3 & term %in% input$pars)
        
        df %>% 
-         ggplot(aes(y = Event, x = estimate)) +
-         geom_density_ridges(aes(fill = Trait), alpha= .4, scale = .8, 
-                rel_min_height = 0.025) +
+         ggplot(aes(y = Trait, x = estimate)) +
+         scale_colour_manual(values = rep("black", length(input$traits3))) +
+         geom_density_ridges(aes(fill = Trait), #alpha= .4, #scale = .8, 
+                rel_min_height = 0.005) +
          stat_pointintervalh(aes(color = Trait), .prob = c(.66, .95)) +
+         facet_grid(~Event) +
          theme_classic() +
          theme(legend.position = "bottom")
      } else if (input$plot == "Trajectories"){
