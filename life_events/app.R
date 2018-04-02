@@ -65,7 +65,8 @@ ui <- fluidPage(
                                     choices = "")
                ),
                mainPanel(
-                 plotOutput("socPlots")
+                 plotOutput("socPlots"),
+                 textOutput("size")
                ))),
                  tabPanel("Matching", 
                           sidebarLayout(
@@ -184,12 +185,12 @@ server <- function(input, output, session) {
          filter(Trait %in% input$traits3 & Event %in% input$events3 & term %in% input$pars)
        
        df %>% 
-         ggplot(aes(y = Trait, x = estimate)) +
+         ggplot(aes(y = Event, x = estimate)) +
          scale_colour_manual(values = rep("black", length(input$traits3))) +
-         geom_density_ridges(aes(fill = Trait), #alpha= .4, #scale = .8, 
+         geom_density_ridges(aes(fill = Trait), #alpha= .4, #scale = .8,
                 rel_min_height = 0.005) +
          stat_pointintervalh(aes(color = Trait), .prob = c(.66, .95)) +
-         facet_grid(~Event) +
+         facet_grid(~Trait, scales = "free") +
          theme_classic() +
          theme(legend.position = "bottom")
      } else if (input$plot == "Trajectories"){
@@ -282,7 +283,9 @@ server <- function(input, output, session) {
                       fill = "royalblue", color = "white", size = 3, nudge_x = -.5)
        }
      }
-   }, height = reactive({ifelse(input$plot == "Group Differences", 150 * length(input$events3), 100 * length(input$events3)) })
+   }, height = reactive({ifelse(input$plot == "Group Differences", 150 * length(unique(input$events3)),
+                         ifelse(input$plot == "Posterior Distributions", 50*length(unique(input$events3)), 
+                                100 * length(unique(input$events3))))[1] })
    )
 }
 
