@@ -50,7 +50,9 @@ ui <- fluidPage(
              sidebarLayout(
                sidebarPanel(
                  selectizeInput("plot", label = "Choose Plot Type:",
-                                choices = c("Trajectories", "Posterior Distributions", "Group Differences")),
+                                choices = c("Trajectories", "Posterior Distributions", "Group Differences", "Trace")),
+                 conditionalPanel(
+                   condition = "input.plot != 'Trace'",
                  
                  conditionalPanel(
                    condition = "input.plot == 'Posterior Distributions'",
@@ -63,6 +65,14 @@ ui <- fluidPage(
                                     selected = c("E", "A", "C", "N", "O")),
                  checkboxGroupInput("events3", label = "Choose Events", 
                                     choices = "")
+                 ),
+                 conditionalPanel(
+                   condition = "input.plot == 'Trace'",
+                   selectizeInput("traits4", label = "Choose Trait:",
+                                  choices = c("E", "A", "C", "N", "O")),
+                   selectizeInput("event4", label = "Choose Events", 
+                                  choices = "")
+                 )
                ),
                mainPanel(
                  plotOutput("socPlots"),
@@ -114,13 +124,15 @@ server <- function(input, output, session) {
   observe({
     events <- unique(diff$Event)
     updateCheckboxGroupInput(session, 'events2', choices = c(events),
-                             selected = events[1:2])
+                             selected = events[1:6])
   })
   
   observe({
     events <- unique(diff$Event)
     updateCheckboxGroupInput(session, 'events3', choices = c(events),
-                             selected = events[1:2])
+                             selected = events[1:6])
+    updateSelectizeInput(session, 'events4', choices = c(events),
+                             selected = events[1])
     pars <- unique(growth_samples$term)
     updateSelectizeInput(session, 'pars', choices = c(pars),
                          selected = pars[1])
@@ -215,7 +227,20 @@ server <- function(input, output, session) {
                strip.text = element_text(face = "bold", size = rel(.8)),
                plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
      } else if (input$plot == "Trace"){
+       df <- growth_samples %>% tbl_df %>%
+         filter(Trait %in% input$traits4 & Event %in% input$events4)
        
+       mcmc_trace(df,
+                  size = .25) +
+         theme_classic() +
+         theme(legend.position = c(.5, .15),
+               legend.direction = "horizontal") +
+         theme(axis.text = element_text(face = "bold"),
+               axis.title = element_text(face = "bold", size = rel(1.2)),
+               legend.text = element_text(face = "bold"),
+               legend.title = element_text(face = "bold", size = rel(1.2)),
+               strip.text = element_text(face = "bold", size = rel(.8)),
+               plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
      } else {
        color = "gray"
        df.sl <-  slopes %>% filter(shrt_Trait %in% input$traits3 & shrt_Event %in% input$events3) %>% 
