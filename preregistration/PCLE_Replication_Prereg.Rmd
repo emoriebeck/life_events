@@ -1,0 +1,438 @@
+---
+title           : "Selection and Socialization: A Propensity Score Matched Study of Personality and Life Events"
+shorttitle      : "Preregistration - Propensity Score Selection and Socialization"
+date            : "`r Sys.setlocale('LC_TIME', 'C'); format(Sys.time(), '%d\\\\. %B %Y')`"
+author: 
+  - name        : Emorie D. Beck
+    affiliation : 1 
+  - name        : Jule Specht
+    affiliation : 2
+  - name        : Wiebke Bleidorn
+    affiliation : 3
+  - name        : Joshua J. Jackson
+    affiliation : 1 
+affiliation:
+  - id          : 1
+    institution : Washington University in St. Louis
+  - id          : 2
+    institution : Humboldt-Universitaät zu Berlin
+  - id          : 3
+    institution : University of California, Davis
+output: 
+  prereg::vantveer_prereg:
+    includes:
+      in_header: header.tex
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message = F, warning = F)
+```
+
+# Introduction
+
+## Project Focus
+
+This project uses longitudinal data to examine the role of personality in predicting a set of life events, as well as personality changes following these experiences.
+
+# Hypotheses
+
+## Predictions and Rationales
+<!-- Describe the (numbered) hypotheses in terms of directional relationships between your (manipulated or measured) variables. For interaction effects, describe the expected shape of the interactions. If you are manipulating a variable, make predictions for successful check variables or explain why no manipulation check is included. -->
+
+We have two categories of hypotheses:  
+
+1. *selection effects:* which of and to what extent do the Big 5 predict the experience of specific life events? 
+2. *socialization effects:* Controlling for selection effects, which of and to what extent do the Big 5 change following the experience of life events?  
+
+Previous work (Specht, Egloff, \& Schmuckle, 2011) has examined the selection into and socialization effects of life events on the Big 5, but the present study extends their work in the following ways:  
+\begin{enumerate}
+  \item Inclusion of a third wave of personality data collected in 2013.  
+  \item Inclusion of additional life event data collected annually from 2010 to 2013.  
+  \item The use of multiple imputation to deal with missing data.  
+  \item The use of propensity score matching to equate individuals who did or did not experience each life event on a number of background characteristics (see Table 1).   
+  \item The use of bayesian structural equation modeling.  
+\end{enumerate}
+
+In other words, rather than directly examining selection effects, we using propensity score matching to eliminate them so we can examine socialization effects of life events independently of baseline differences in various characteristics, including the personality characteristics for which we are examining change.  
+
+To date, propensity score matching and weighting have been applied in a handful of studies in personality on a restricted set of life events, including entering into the military (Jackson, Thoemmes, Jonkmann, Lüdtke, \& Trautwein 2012), transitioning to parenthood (van Scheppingen et al., 2016), entering into romantic relationships (Wagner, Becker, Lüdtke, \& Trautwein, 2015), and moving into managerial positions (Niess \& Zacher, 2015), so what we would expect based on the studies utilizing propensity score matching is extremely limited. Thus, we largely base our predictions on previous findings concerning the relationship between personality change and life events using the GSOEP sample.  
+
+## Socialization Effects  
+Two main theories guide predictions about how personality changes, regardless of whether life events occur: (1) an essentialist perspective that argues that personality is genetically based and biologically determined, and a contextualist or social cognitive perspective that argues about the importance of social and environmental influences. The contextualist, but not the essentialist, perspective predicts personality change.  
+
+Given evidence that personality does change (or differ) throughout the lifespan, both longitudinally (Roberts et al., 2006) and cross-sectionally (Soto et al., 2011; Specht et al., 2011; Beck, Condon, \& Jackson, in prep), and that longitudinal trait changes correlate with longitudinal state changes in personality (Beck \& Jackson, in prep) we proceed from an enivornmental  perspective -- that is, we expect that personality will change. Specifically, according to the model of person-environment transactions (Roberts et al., 2008), the *Plasticity Principle* suggests that personality traits are changeable in any environment at any age. Change can occur and and that can be at any time throughout the life course. These general life course changes are termed normative maturation and are outlined below. 
+
+\begin{itemize}
+\item \textbf{Extraversion}: the social dominance facet tends to curvilinearly increase until around age 50 (Roberts, Walton, \& Viechtbauer, 2006) after which it tends to decline (Specht et al., 2011), while the social vitality facet tendes to slightly increase in young adulthood and then slightly decline in older adulthood across the lifespan. Because the items used in the present study reflect social vitality (sociability and energy) more than social dominance (self confidence, independence, and dominance), we expect to see overall increases in Extraversion in early adulthood followed by slight declines later in life.  
+\item \textbf{Agreeableness} increases across the lifespan (Roberts et al., 2006; Specht et al., 2011).   
+\item \textbf{Conscientiousness} increases throughout the lifespan (Roberts et al., 2006). In this sample, age differences suggest C increases in young adulthood, is relatively stable in middle adulthood, and decreases slightly in middle to older adulthood (Specht et al., 2011).   
+\item \textbf{Neuroticism (Emotional Stability)} decreases throughout young and middle adulthood, particularly during young adulthoood, and increases slightly in older adulthood (Roberts et al., 2006; Specht et al., 2011).  
+\item \textbf{Openness} longitudinally shows a upside down u shaped curve, increasing in young adulthood and decreasing in older adulthood (Roberts et al., 2006). In this sample, openness cross-sectionally decreased throughout the lifespan, particularly in young and older adulthood (Specht et al., 2011).  
+\end{itemize}
+
+<!-- Critically, this means that we expect different life events to change personality as a function of how great of a role change the life event requires. For example, in the work domain, a promotion may somewhat change one's duties within the workplace but is unlikely to greatly change roles outside of the workplace or relative to the workplace. In contrast, starting one's first job comes with accompanying role changes in many domains of life as one adjusts to a regular schedule and wholly new demands of bosses of colleagues.  -->
+
+## Group differences in slopes (Life Event Socialization Effects)
+
+The mere observation of normative change does not explain why it occurs. To explain change, we again turn to three principles of the model of person-environment transactions (Roberts et al., 2008) to provide possible mechanisms of change: the role continuity principle, the social investment principle, and the corresponsive principle (see below).
+
+\begin{itemize}
+\item The \textit{Role Continuity Principle} suggests that roles, rather than events, change personality. In other words, we can expect life events that are associated with role changes to have a greater influence on personality (socialization effects). For example, beginning starting a first job is likely to come with increased responsibilities and different constraints on an individuals' time in order to fulfill the role of an employee, while an internal promotion within a job may result in minimal role change and is less likely to impact personality.  
+\item The \textit{Social Investment Principle} suggests that investment in social institutions is the primary vehicle through which people take on and invest in new roles. It is only through an \textit{investment} in a role that change will occur. Notably, social institutions include relationships, career roles, or any other entity with a set of norms.  
+\item The \textit{Corresponsive Principle} suggests that people select into life events and roles that align with their personality characteristics -- that is, the relationship between personality and life events is cyclical. In other words, when slopes are correlated with intercepts, the relationship should be positive.   
+\end{itemize}
+
+Together, this suggests that socialization and selection effects are not independent -- that is, baseline differences may masquerade as socialization or selection effects of a personality trait, when in fact, these effects are explained by other variables. We propose five possibilities for how life events may affect the slopes of individuals (see also Figure 3).  
+
+------
+
+*Hypotheses and Rationale:*  
+
+2a. **Normative maturation.** Once accounting for baseline characteristics, people will experience similar development regardless of whether they experienced a life event (i.e., no group differences in slopes). Evidence for this from the Big 5 comes from longitudinal studies of the transition to parenthood (van Scheppingen et al., 2016) and military training (Jackson et al., 2012), who found minimal change in the Big 5 among people who did or did not experience these events.    
+
+2b. **Accelerated maturation.** People who experience a life event will show steeper positive changes in personality than those who do not, regardless of whether they had baseline advantages over those who did not. This would provide evidence for the importance of social roles -- those who take those roles on sooner show change that resembles normative change but earlier in the life course. Evidence for this comes from cross-cultural research (Bleidorn et al., 2013) that found normative maturation was accelerated in countries in which work and family responsibilities were taken on sooner.       
+
+2c. **Arrested development.**  People who experience a life event will show no change in personality, while those who did not will experience normative patterns of change. Evidence for arrested development comes from studies of incarceration in adolescence suggesting that adolescents who are incarcerated show minimal decreases in impulsivity relative to those who were not incarcerated (Bollich et al., 2017).   <!-- Aligns with Helson and Roberts papers on how getting a job speeds up normative development. Possibly also that Gosling paper on cultural differences in personality change / age differences in persoanlity -->    
+2d. **Retrogression.**  Individuals who experience a life event will show non-normative declines in socially desirable personality traits, regardless of their baseline standing on a trait. Evidence for retrogression again comes from a longitudinal study of military training, in which individuals who joined the military decreased in Agreeableness after training and such decreases persisted even after leaving the military (Jackson et al., 2011).  <!-- Aligns with evidence on negative life events, like prison, rape, etc. Pull in resilience articles here -->
+
+```{r}
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+expand.grid(
+  Wave = seq(0,2,1),
+  Group = c("No Event", "Event"),
+  hypoth = c("Normative Maturation", "Accelerated Maturation",
+             "Arrested Development", "Retrogression")
+) %>% 
+  mutate(value = ifelse(Group == "No Event", Wave * 1.5 + 2,
+                 ifelse(hypoth == "Normative Maturation", 
+                        Wave *1.5 + 2, 
+                 ifelse(hypoth == "Accelerated Maturation", 
+                         Wave * 2 + 2,
+                 ifelse(hypoth == "Arrested Development", 2,
+                 -1.25*Wave + 2))))) %>%
+  ggplot(aes(x = Wave, y = value, color = Group)) +
+  geom_line(aes(group = Group), size = 2) + 
+  facet_wrap(~hypoth, ncol = 2) +
+  theme_classic()
+```
+
+
+We are atheoretical about our predictions for differences among people who did or did not experience different life events. We expect differences to be different across life events -- that is, parenthood may change personality differently from beginning one's first job and retirement might impact personality differently than losing a child. Moreover, we do not expect our results to align with Specht et al.'s (2011) findings (see the table and summary below) using two waves of personality and life event data using the same sample because we expect that the propensity score matching group will partially explain some socialization effects they observed.  
+
+------
+
+*Rationale (Summary of Specht et al. (2011)):*  
+\begin{itemize}
+\item \textbf{Extraversion}: people who married, moved in with a partner, and left the parental home became less Extraverted      
+\item \textbf{Agreeabless}: people who divorced or separated from their partner became more Agreeable  
+\item \textbf{Conscientiousness}: People who get divorced or start their first jobs become more Conscientious, while people who have a child or retire become less Conscientious. Furthermore, women who lost a spouse became less Conscientious, while men who lost a spouse became more Conscientious    
+\item \textbf{Emotional Stability}: women, but not men, became more Emotionally Stable after leaving their parents' home  
+\item \textbf{Openness}: people who married or left the parental home became less open    
+\end{itemize}
+
+```{r}
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+data_path <- "~/Box Sync/network/other projects/PCLE Replication"
+options(knitr.kable.NA = '')
+readxl::read_xlsx(sprintf("%s/preregistration/specht2011_results.xlsx", data_path)) %>%
+  select(Event, contains("Slope")) %>%
+  kable(., "latex", booktabs = T, escape = F,
+        col.names = c("Event", rep("Slope",times = 5)),
+        align = c("l", rep("c", times = 5))) %>%
+  kable_styling(latex_options = c("repeat_header", "striped"),
+                full_width = F, font_size = 8.5) %>%
+  column_spec(2:6, width = "2.6cm") %>%
+  column_spec(1, width = "4cm") %>%
+  add_header_above(c(" ", "Extraversion" = 1,"Agreeableness" = 1, 
+       "Conscientiousness" = 1, "Emotional Stability" = 1, "Openness" = 1)) %>%
+  landscape()
+```
+
+------
+
+<!-- *Rationale (With Propensity Score Matching):*   -->
+<!-- \begin{itemize} -->
+<!-- \item \textbf{Extraversion}: People who started romantic relationships were more Extraverted than those who started them later (Wagner et al., 2015)     . -->
+<!-- \item \textbf{Agreeabless}: Men who had been fathers longer decreased in Agreeableness (van Scheppingen et al., 2016) and men who entered military service decreased more in Agreeableness (Jackson et al., 2012).   -->
+<!-- \item \textbf{Conscientiousness}: We found no observed effects of Conscientiousness socialization following life events when propensity score analysis was utilized.         -->
+<!-- \item \textbf{Emotional Stability}: There were no available studies of personality change using matched samples that reported socialization effects of Emotional Stability.   -->
+<!-- \item \textbf{Openness}: Women who had been mothers longer decreased less in Openness (van Scheppingen et al., 2016) and those who entered managerial positions increased in Openness (Niess \& Zacher, 2015).       -->
+<!-- \end{itemize} -->
+
+
+<!-- ## Rationale (optional)
+<!-- A figure or table may be helpful to describe complex interactions; this facilitates correct specification of the ordering of all group means. For original research, add rationales or theoretical frameworks for why a certain hypothesis is tested. If multiple predictions can be made for the same IV-DV combination, describe what outcome would be predicted by which theory. -->
+
+
+# Methods
+
+
+
+<!-- ## Design
+<!-- List, based on your hypotheses from the hypotheses section A, independent variables with all their levels
+    a) whether they are within- or between-participant
+    b) the relationship between them (e.g., orthogonal, nested).
+
+List dependent variables, or variables in a correlational design and variables acting as covariates or moderators. -->
+
+Our project focuses on two groups in our sample: (a) people who experienced a life event and (b) people who did not. For each life event, we outline the item text used to gather information on life events in each wave of the GSOEP.  
+
+```{r, results = 'asis'}
+library(knitr)
+library(kableExtra)
+knitr::kable(
+  readxl::read_xlsx(sprintf("%s/data/Codebook.xlsx", data_path), sheet = "life_events"),
+  "latex", longtable = T, booktabs = T) %>%
+  kable_styling(latex_options = c("striped","repeat_header"),full_width = F) %>%
+  #kable_styling(full_width = F) %>%
+  column_spec(1, width = "2.5cm") %>%
+  column_spec(3, width = "8cm")
+```
+
+
+We are studying the Big 5: Extraversion, Agreeableness, Conscientiousness, Emotional Stability (Neuroticism), and Openness to Experience. They were defined as following: 
+
+```{r, results = 'asis'}
+knitr::kable(
+  readxl::read_xlsx(sprintf("%s/data/Codebook.xlsx", data_path), sheet = "Big5"),
+  "latex", longtable = T, booktabs = T) %>%
+  kable_styling(latex_options = c("striped","repeat_header"),full_width = F) %>%
+  #kable_styling(full_width = F) %>%
+  column_spec(1, width = "2.5cm") %>%
+  column_spec(3, width = "8cm")
+```
+
+
+## Planned sample
+<!-- If applicable, describe pre-selection rules. Indicate where, from whom and how the data will be collected. Justify planned sample size. If applicable, include or refer to a file related to your power analysis here (e.g., a protocol of power analyses from G*Power, a script, a screenshot, etc.). Describe data collection termination rule. -->
+
+This project uses the German Socioeconomic Panel Study (GSOEP) data. These data were collected by the German Institute of Economic Research (DIW Berlin) and are available, through application, at https://www.diw.de/soep. 
+
+Participants were recruited from more than 11,000 households and data have been collected annually since 1985. The latest data release includes data up to 2015. On average, 20,000 individuals are sampled each year. More information on the GSOEP can be found at https://www.diw.de/en/diw_02.c.221178.en/about_soep.html#299799, but, in short, the GSOEP is a nationally representative sample of private German households. It is critical to note that the GSOEP samples households, not individuals, and the households consist of individuals "living in both the "old" and "new" federal states (the former West and East Germany), foreigners, and recent immigrants to Germany." 
+
+Sample size varies by year, ranging from approximately 10,000 (1989) to 31,000 (2013) (http://soep.readthedocs.io/en/latest/overview/sample.html). This provides 99% power to detect a zero-order correlation effect size of ~.06, two-tailed at alpha .05.  
+
+```{r, echo=F, results = 'asis'}
+load(sprintf("%s/preregistration/le_dat.RData", data_path))
+le_dat %>%
+  mutate(age = 2005-Dem_DOB) %>% 
+  #select(-le.value)) %>%
+  filter(!is.na(le.group)) %>%
+  group_by(Event) %>%
+  mutate(m.age = mean(age[le.group == 1], na.rm = T),
+         sd.age = sd(age[le.group == 1], na.rm = T),
+         perc_women = sum(Dem_Sex == 2 & le.group == 1) / 
+           sum(Dem_Sex %in% c(1,2) & le.group == 1)) %>%
+  group_by(Event, le.group, m.age, sd.age, perc_women) %>%
+  summarize(n = n()) %>%
+  spread(key = le.group, value = n) %>%
+  mutate(Frequency = sprintf("%.0f (%.0f)", `1`, (`1` + `0`))) %>%
+  select(-`0`, -`1`) %>% select(Event, Frequency, everything()) %>%
+  kable(., "latex", booktabs = T, escape = F, digits = 2,
+        col.names = c("Life Event", "Frequency (Total)", "$M$", "$SD$", "\\% women")) %>%
+  kable_styling(latex_options = c("striped","repeat_header"),full_width = F) %>%
+  #kable_styling(full_width = F) %>%
+  column_spec(1, width = "3cm") %>%
+  add_header_above(c(" " = 2,  "Age in 2005" = 2, " " = 1))
+```
+
+
+## Exclusion criteria
+<!-- Describe anticipated specific data exclusion criteria. For example:
+    a) missing, erroneous, or overly consistent responses;
+    b) failing check-tests or suspicion probes;
+    c) demographic exclusions;
+    d) data-based outlier criteria;
+    e) method-based outlier criteria (e.g. too short or long response times). -->
+
+Participants whose data fall outside the possible range of responses for a given question will be excluded.
+
+To be included, participants had to have at least one wave of measurement in each of the following:  
+\begin{itemize}
+\item \textbf{Matching variables} (variables used for multiple imputation and propensity score matching/weighting)  
+\item \textbf{Grouping variables} (variables used to track the presence or absence of at least one life event)  
+\item \textbf{Outcome variables} (personality measures for growth curves)  
+\end{itemize}
+
+
+<!-- ## Procedure
+<!-- Describe all manipulations, measures, materials and procedures including the order of presentation and the method of randomization and blinding (e.g., single or double blind), as in a published Methods section. -->
+
+<!-- Optional: Set fail-safe levels of exclusion at which the whole study needs to be stopped, altered, and restarted. You may pre-determine what proportion of excluded participants will cause the study to be stopped and restarted. If applicable, you can refer to any files related to your methods and procedure here (e.g., a paper describing a scale you are using, experimenter instructions, etc.) -->
+
+
+
+
+# Analysis plan
+
+## Confirmatory analyses 
+
+Our confirmatory analyses will be tested using a series of second-order latent growth curve models.
+
+*Predictor Variables:*  
+\begin{itemize}
+\item Wave (2005, 2009, 2013)  
+\item Group (life event or no life event): moderator variable  
+\end{itemize}
+
+*Outcome Variable(s):*  
+Personality measured using the BFI-S (John, Donahue, \& Kentle, 1991; see also John, Naumann, \& Soto, 2008, and Lang, Lüdtke, \& Asendorpf, 2001, for further information on the scale, the German translation, and evidence for its reliability and validity). The short version was created by Gerlitz \& Schupp (2005) and contains 15 items that participants responded to on a Likert-like scale from 1 (does not apply at all) to 7 (applies perfectly).  
+
+*Selection Effects*: We will remove selection effects using propensity score matching.    
+*Normative Development*: the latent slope term in the latent growth model indicates the overall change trajectory.  
+*Socialization Effects*: regressing the life event group term on the latent slope in the latent growth curve models indicates group differences in personality change.  
+
+(Note that as shown in the model syntax below, each of the above will be tested with a single model for each trait-event combination.)   
+
+*Covariates*: Based on past work (e.g. Specht et al., 2011; Soto et al., 2011), we will include age and gender as covariates for each model. We will also test whether age and gender moderate the effect of life events on personality and personality change. <!--We will also test quadratic and cubic terms for change because there is evidence on non-linear change in personality throughout the lifespan (cite plz).-->  
+<!-- Describe the analyses that will test the predictions from the hypotheses section A. Include: 
+    a) the relevant variables and how they are calculated
+    b) the statistical technique
+    c) each variable’s role in the technique (e.g., IV, DV, moderator, mediator, covariate)
+    d) rationale for each covariate used, if any.
+
+If using techniques other than null hypothesis testing (for example, Bayesian statistics), describe your criteria and inputs toward making an evidential conclusion, including prior values or distributions. -->
+
+We will implement the 2nd-order latent growth curve models using the `blavaan` package in `R`. We plan to use the default priors, which reflect defaults in the the JAGS software imported by the `blavaan` package (see below).  
+
+```{r}
+library(blavaan)
+dpriors()
+```
+
+
+## Details of analysis
+<!-- Specify contingencies and assumptions, such as: 
+    a) Method of correction for multiple tests
+    b) The method of missing data handling (e.g., pairwise or listwise deletion, imputation, interpolation)
+    c) Reliability criteria for item inclusion in scale
+    d) Anticipated data transformations
+    e) Assumptions of analyses, and plans for alternative/corrected analyses if each assumption is violated
+    f) If applicable, you can refer to any files here that are related to your analyses (e.g., syntaxes, scripts, etc.). -->
+
+The analysis phase will consist of four main parts, with interim steps to link these together: multiple imputation, propensity score matching, tests of longitudinal measurement invariance, and tests of socialization effects using bayesian latent growth curve modeling.  
+
+First, we will use multiple imputation to impute missing data for the matching variables (see below). Before doing so, we first create composites of our matching variables prior to 2005. We do this because irregularities in survey construction and response due to a variety of factors. To ensure transparency, we conduct all analyses using the raw data imported directly from the raw .sav files obtained from the SOEP website, and all steps in creating the composites are documented in a spreadsheet containing the item lists, text, and scales. Moreover, all steps are documented in a separate .Rmd file attached with this preregistration. The composite matching variables will later be used in propensity score matching, which requires completely non-missing data. Multiple imputation will be conducted using the `mi` package in R. Because the `missing_data.frame()` function attempts to automatically detect the scale of measurement, we will manually set all variables with ranges of at least 3 to continuous. We will impute 10 data sets. Full details of the multiple imputation procedure are available in the supplementary R scripts to this pre-registration.  
+
+**Matching Variables**  
+```{r, results = 'asis'}
+knitr::kable(
+  readxl::read_xlsx(sprintf("%s/data/Codebook.xlsx", data_path), sheet = "matching"),
+  "latex", longtable = T, booktabs = T) %>%
+  kable_styling(latex_options = c("striped","repeat_header"),full_width = F) %>%
+  #kable_styling(full_width = F) %>%
+  column_spec(1, width = "2.5cm") %>%
+  column_spec(3, width = "8cm")
+```
+
+Second, we will use the multiply imputed data to calculate propensity scores for each of the mutliply imputed datasets for each life event separately. We will then use propensity score matching to try to equate our 2 groups in the sample. Because the sample size of the groups of people who experience specific life events are much smaller than the individuals who did not experience them, we choose to use propensity score matching, we begin by using "nearest neighbor" matching and a ratio of 4 to 1 and a caliper width of $.25\sigma$ (Guo \& Fraser, 2015). The ratio will be updated iteratively for different life events if we are unable to achieve balance with our starting ratio of 4 to 1.  Propensity score matching will be done using the `matchit` package in R. <!--We will use 3000 trees and a stop method based on the average effect size ("es.mean").--> After completing the propensity score weighting, we will examine the balance plots to test normality of the groups after matching. <!--Of particular interest are those variables for which any of our groups showed increased differences after weighting, especially those with small unweighted effect sizes. These variables will be candidates for dropping, but we will retain them if they are of theoretical interest. To mitigate concerns of their impact, these variables will then also be included as covariates in the growth curve models.-->  
+
+Third, we will test for longitudinal invariance for each Big 5 factor. This will serve as the measurement model and the basis for all further models of the data. We have three waves of data with three indicators of each Big 5 trait at each wave, so we will construct a measurment model with 3 correlated latent variables (one for each wave), each consisting of 3 indicators. We impose strong invariance, meaning that we constrain the factor loadings and intercepts but not the error variances to be equal across all the waves. When this holds, this means that we can assume each latent variable intercept is on the same scale, which allows us to interpret slopes as change in the larger latent trait. Furthermore, we allowed each of the three indicators to correlate across time points, to account for the correlated error structure.  
+
+Fourth, we will merge the matched datasets with the outcome (personality) data for use in growth curve models. Because of equal spacing between personality waves, we will use second-order latent growth curve models. We will use `blavaan` package in R, which allows us to to use bayesian estiamtion of the LGCM. Age in 2005 and gender will be included as a covariate in all models, and the "no life event" group will be considered the reference group. The basic model of the latent growth curve model with random slopes and intercept is as follows:  
+
+
+<!--We will also test quadratic and cubic age terms to test for non-linearity in change. We will choose final models (linear, quadratic, or cubic) based on model comparisons using likelihood ratio tests of pooled log likelihoods.-->  
+
+We will fit growth curve models for each of the predictors for each of the multiply imputed datasets. To test for nonlinearity, we will fit latent basis models, eliminating the constraint on the loading of the latent slope in 2009 and 2013. We will make model selections based on comparisons among marginal log-likelihoods. Once they are fitted, we will use Rubin's Rules to pool fixed effects and random effect variance terms. Pooled individual level random effects will be calculated by taking the average across the datasets for each person individually (see the .Rmd script of planned analyses for more details). <!--For each model, we will also pool the ADD BAYESIAN MODEL FIT MEASURS HERE intraclass correlation (ICC; using the R package `RegHelper`), Conditional and Marginal $R^2$ (using the R package `MuMIn`).--> Results across the matched and unmatched pooled models will be extracted using the R packages `dplyr`, `tidyr`, and `purrr`. Average fixed and random effects across models will be displayed using simple slopes for each group from the growth model above using the R package `ggplot2`.
+
+\small
+```{r, echo = T, eval = F}
+growth.mod <- '
+T1 =~ NA*T1_1 + (lambda1)*T1_1 + (lambda2)*T1_2 + (lambda3)*T1_3 
+T2 =~ NA*T2_1 + (lambda1)*T2_1 + (lambda2)*T2_2 + (lambda3)*T2_3 
+T3 =~ NA*T3_1 + (lambda1)*T3_1 + (lambda2)*T3_2 + (lambda3)*T3_3 
+
+
+###intercepts
+T1_1 ~ (nu1)*1
+T1_2 ~ (nu2)*1
+T1_3 ~ (nu3)*1
+T2_1 ~ (nu1)*1
+T2_2 ~ (nu2)*1
+T2_3 ~ (nu3)*1
+T3_1 ~ (nu1)*1
+T3_2 ~ (nu2)*1
+T3_3 ~ (nu3)*1
+
+####variances/covariances
+# item 1
+T1_1 ~~ T2_1
+T1_1 ~~ T3_1
+T2_1 ~~ T3_1
+
+# item 2
+T1_2 ~~ T2_2
+T1_2 ~~ T3_2
+T2_2 ~~ T3_2
+
+# item 3
+T1_3 ~~ T2_3
+T1_3 ~~ T3_3
+T2_3 ~~ T3_3
+
+I =~ 1*T1 + 1*T2 + 1*T3
+S =~ 0*T1 + 1*T2 + 2*T3
+
+I ~~ I
+S ~~ S
+I ~~ S
+I ~ 1
+S ~ 1
+T1 ~ 0*1
+T2 ~ 0*1
+T3 ~ 0*1
+
+#model constraints
+lambda1 == 3 - lambda2 - lambda3 
+(nu1) == 0 - (nu2) - (nu3)
+
+'
+
+null.mod <- '
+I ~ age + sex.c
+'
+
+group.mod <- '
+  I ~ le.group + age.c + sex.c
+  S ~ le.group + age.c + sex.c
+'
+```
+
+\normalsize  
+
+## Existing data
+<!-- Has data collection begun for this project? -->
+
+<!-- **Data collection has not begun.** -->
+
+<!-- **Data collection is underway or complete but I have not yet looked at the data.** -->
+  
+**Data collection is underway or complete but I have not yet looked at this data.**  
+These data were collected by the German Institute of Economic Research (DIW Berlin). Data have been downloaded and cleaned, but I have not run any statistical tests on the data except to calculate the number of individuals in each group for each life event to ensure that we had adequate power.  
+
+
+<!-- ## Project schedule (optional)
+<!-- Provide the (estimated) start and end dates for this project. -->
+
+
+
+
+<!-- ## Further comments (optional)
+
+Enter your response here.-->
+This study will be presented in fulfillment of the first author's master thesis at Washington University in St. Louis.  
+
+
+## 
+\vspace{-2pc}
+\setlength{\parindent}{-0.5in}
+\setlength{\leftskip}{-1in}
+\setlength{\parskip}{8pt}
+\noindent

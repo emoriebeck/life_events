@@ -1,0 +1,2167 @@
+---
+title: "PCLE Replication"
+author: "Emorie Beck"
+date: "04/04/2018"
+output:
+  html_document:
+    number_sections: yes
+    theme: united
+    highlight: tango
+    df_print: paged
+    code_folding: hide
+    toc: true
+    toc_float: true
+    toc_depth: 2
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 2
+    keep_tex: yes
+    includes:
+            in_header:
+                header.tex
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F, error = F)
+options(knitr.kable.NA = '')
+options(papaja.na_string = "")
+options(knitr.table.format = "html")
+```
+
+#Workspace
+##Packages
+\footnotesize
+```{r}
+library(survey)
+library(mi)
+library(psych)
+library(MatchIt)
+library(lavaan)
+library(semTools)
+library(rstan)
+library(lme4)
+library(brms)
+library(rstanarm)
+library(tidybayes)
+library(MuMIn)
+library(parallel)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(stargazer)
+library(plyr)
+library(stringr)
+library(haven)
+library(tidyverse)
+library(ggridges)
+
+data_path <- "~/Box/network/other projects/PCLE Replication"
+data_path <- "https://github.com/emoriebeck/life_events/raw/master"
+model_path <- "~/Box/Models/PCLE Replication"
+```
+
+
+# Data
+##Load Raw Data
+First we'll load in the Codebook that lists which dataset each variable is in, what's it's named in those data files, what I'd like to name it for consistency, the scale it's measured on, the year it was measured, whether it was reverse keyed, whether I want to recode the variable, and what rules I want to use to create composites (for matching variables).  
+
+```{r all data, eval = F}
+meta <- readxl::read_xlsx(sprintf("%s/data/Codebook.xlsx", data_path)) %>%
+  mutate(Item = stringr::str_to_lower(Item))
+
+all.old.cols <- (meta %>% filter(class == "proc" & Year == 0))$Item
+all.new.cols <- (meta %>% filter(class == "proc" & Year == "0"))$new_name
+
+# create short function to read in separate files for each wave
+read_fun <- function(file, year){
+  print(year)
+  old.names <- (meta %>% filter(Year == year & class %in% c("group", "predictor", "proc")))$Item
+  new.names <- (meta %>% filter(Year == year & class %in% c("group", "predictor", "proc")))$new_name
+  z <- haven::read_sav(sprintf("%s/data/sav_files/%sp.sav", data_path, file)) %>%
+    left_join(haven::read_sav(sprintf("%s/data/sav_files/%spkal.sav", data_path, file))) %>%
+    left_join(haven::read_sav(sprintf("%s/data/sav_files/%sh.sav", data_path, file))) %>%
+    select(one_of(all.old.cols), one_of(old.names)) %>%
+    setNames(c(all.new.cols, new.names)) %>%
+    mutate_all(funs(mapvalues(., seq(-1,-7,-1), c(NA, 0, rep(NA,5)), warn_missing = F))) %>%
+    group_by(PROC_SID) %>%
+    mutate(LE_ParDied = max(LE_MomDied,LE_DadDied, na.rm = T),
+           LE_ParDied = ifelse(is.nan(LE_ParDied) == T, NA, LE_ParDied)) %>%
+    gather(key = new_name, value = value, -PROC_SID, -PROC_household, -Dem_DOB, -Dem_Sex) %>%
+    left_join(meta %>% filter(Year == year) %>% select(new_name, rev_code)) %>%
+    mutate(value = ifelse(rev_code == 0 | is.na(rev_code), value, 
+                   reverse.code(keys=-1, items=value, mini=1, maxi=8))) %>%
+    select(-rev_code)
+}
+
+dat <- tibble(
+  Year = as.character(seq(2005, 2015,1)),
+  file = c(letters[22:26], paste("b", letters[1:6], sep = ""))) %>%
+  mutate(data = map2(file, Year, read_fun)) %>%
+  unnest(data) %>%
+  group_by(PROC_SID) %>% 
+  mutate(
+    Dem_DOB = max(Dem_DOB, na.rm = T),
+    Dem_DOB = ifelse(is.infinite(Dem_DOB) == T, NA, Dem_DOB),
+    Dem_Sex = max(Dem_Sex, na.rm = T),
+    Dem_Sex = ifelse(is.infinite(Dem_Sex) == T, NA, Dem_Sex)
+  )
+```
+
+```{r load data}
+load(url(sprintf("%s/results/data.RData", data_path)))
+```
+
+## Clean BFI Data
+Let's clean the personality data. to do this, we'll want to recode the years into waves, figure out what the first wave we have for each person is, and recode the sex and age variables for later. Then, I'll do some transformations of the data into wide format for later and for matching.  
+```{r clean BF, eval = F}
+bfi_dat <- dat %>% ungroup() %>%
+  separate(new_name, c("type", "Item"), sep = "_") %>%
+  filter(type == "BF") %>%
+  mutate(wave = as.numeric(mapvalues(Year, seq(2005,2013,4), 1:3))) %>%
+  group_by(PROC_SID) %>%
+  mutate(fy = min(Year, na.rm = T),
+         wave = ifelse(fy != 2005, wave-min(wave) + 1, wave)) %>%
+  # mutate(wave = seq(1, n(), 1)) %>%
+  # find people who didn't do any Big 5 responses
+  group_by(PROC_SID, Item) %>%
+  mutate(na = sum(!is.na(value))) %>%
+  ungroup() %>%
+  # recode gender & center age at first BFI wave (2005)
+  mutate(sex12 = mapvalues(Dem_Sex, c(1,2), c(1,0), warn_missing = F),
+         sex.c = as.numeric(scale(sex12, center = T, scale = F)),
+         age = as.numeric(fy)-Dem_DOB, 
+         age.c = age - mean(age, na.rm = T),
+         age.c2 = age.c^2, #agec2 = agec^2,
+         age.c3 = age.c^3) #agec3 = agec^3,
+  
+  
+bfi_wide <- bfi_dat %>%
+  filter(na > 1) %>%
+  separate(Item, c("Trait", "Item"), 1) %>%
+  unite(Item, wave, Item, sep = "_") %>%
+  mutate(Item = sprintf("T%s", Item)) %>%
+  select(PROC_SID, Trait, Item, value, sex12:age.c3) %>%
+  spread(key = Item, value = value)
+
+bfi_match <- bfi_dat %>%
+  filter(na > 1) %>%
+  unite(Item, Item, wave, sep = "_") %>%
+  select(PROC_SID, Item, value) %>%
+  spread(key = Item, value = value)
+```
+
+### BFI Scale Reliability
+We want to make sure our scales are performing as expected, so we'll calculate Cronbach's alpha for each scale for each year. 
+```{r}
+alpha_fun <- function(df){
+  df <- df %>% select(-PROC_SID)
+  psych::alpha(df)$total$raw_alpha
+}
+
+bfi_wide %>% select(PROC_SID, Trait, T1_1:T3_3) %>%
+  gather(key = item, value = value, T1_1:T3_3) %>%
+  separate(item, c("wave", "item"), sep = "_") %>%
+  spread(key = item, value = value) %>%
+  group_by(wave, Trait) %>%
+  nest() %>%
+  mutate(alpha = map(data, alpha_fun)) %>%
+  unnest(alpha, .drop = T) %>%
+  spread(key = wave, value = alpha) %>%
+  kable(., "html", digits = 2, escape = F, booktabs = T,
+        col.names = c("Trait", "Wave 1", "Wave 2", "Wave 3"),
+        caption = "Cronbach's Alpha Scale Reliabilities for the BFI-S Subscales") %>%
+  kable_styling(full_width = F)
+```
+
+
+## Clean Life Event Data
+For our life event groups, we need to figure who experienced what. We care less about when as long as it was between 2006 and 2015 and didn't occur in 2005. Some of the original variables are on different scales, so we'll recode those. This will eventually leave us with unique codes for each of the life events, where each participant will be coded as "1" if they experienced that event and "0" otherwise.  
+```{r clean le, eval = F}
+event_fun <- function(df, event){
+  print(event)
+  print(unique(df$Year))
+  z <- df %>%
+    select(-type, -file) %>%
+    spread(key = Year, value = value) #%>%
+  #   mutate(
+  #     `2006` = ifelse(`2005` != 1 & `2006` == 1, 1, 0),
+  #     `2007` = ifelse(`2006` != 1 & `2007` == 1, 1, 0),
+  #     `2008` = ifelse(`2007` != 1 & `2008` == 1, 1, 0),
+  #     `2009` = ifelse(`2008` != 1 & `2009` == 1, 1, 0),
+  #     `2010` = ifelse(`2009` != 1 & `2010` == 1, 1, 0),
+  #     `2011` = ifelse(`2010` != 1 & `2011` == 1, 1, 0),
+  #     `2012` = ifelse(`2011` != 1 & `2012` == 1, 1, 0),
+  #     `2013` = ifelse(`2012` != 1 & `2013` == 1, 1, 0))
+  # if(event != "LeftPar"){z <- z %>% 
+  #   mutate(`2014` = ifelse(`2013` != 1 & `2014` == 1, 1, 0),
+  #          `2015` = ifelse(`2014` != 1 & `2015` == 1, 1, 0))
+  # }else{z <- z %>%
+  #   mutate(`2015` = ifelse(`2013` != 1 & `2015` == 1, 1, 0))}
+  z <- z %>% mutate(
+      Event12 = ifelse(`2005` == 0 & rowSums(cbind(`2006`,`2007`,`2008`,`2009`),na.rm = T) > 0, 1, 0),
+      Event23 = ifelse(Event12 == 0 & rowSums(cbind(`2010`,`2011`,`2012`,`2013`),na.rm = T) > 0, 1, 0))
+  if(event != "LeftPar"){
+    z <- z %>% mutate(
+      Event3p = ifelse(rowSums(cbind(`2014`, `2015`), na.rm = T) > 0, 1, 0)) #%>%
+      # gather(key = le.group, value = le.value, `2006`:Event3p)
+  } else{
+    z <- z %>% mutate(Event3p = ifelse(`2015` >= 1, 1, 0)) #%>%
+      # gather(key = le.group, value = le.value, `2006`:Event3p)
+  }
+}
+  
+# missing moving out of parental home and how often a child was born 
+
+le_dat <- dat %>% ungroup() %>%
+  separate(new_name, c("type", "Event"), sep = "_") %>%
+  filter(type == "LE" & #PROC_SID %in% unique(bfi_wide$PROC_SID) &
+           Event %in% c("Married", "Divorce", "MoveIn","SepPart", "PartDied",
+                       "ChldMvOut", "ChldBrth", "MomDied", "DadDied", "ParDied",
+                       "Unemploy", "Retire", "FrstJob", "LeftPar")) %>%
+  mutate(value = ifelse(Event == "Retire" | Event == "Unemploy", mapvalues(value, c(2,1), c(0,1)), 
+                 ifelse(Event == "FrstJob", mapvalues(value, seq(1,6,1), c(1,rep(0,5))),value))) %>%
+  group_by(Event) %>%
+  nest() %>%
+  mutate(event.dat = map2(data, Event, event_fun)) %>%
+  unnest(event.dat, .drop = T)
+
+le_dat <- le_dat %>% select(Event:Dem_Sex, Event12, Event23) %>%
+  mutate(le.group = ifelse(Event12 == 1 | Event23 == 1, 1, 0),
+         le.group = ifelse(is.na(Event12) == T & is.na(Event23) == T, NA_real_, le.group))
+```
+
+## Clean Matching Data
+The matching data is a little more complicated. Ultimately, we want to end up with 53 variables for matching, but these will be created from compositing more than one thousand responses collected between 1984 and 2005. To do this, we'll again have to read in some raw data since some of the matching variables come from different datasets than the personality and life event data. 
+```{r clean match, eval = F}
+all.old.cols <- (meta %>% filter(class %in% c("proc") & Year == "0"))$Item
+all.new.cols <- (meta %>% filter(class %in% c("proc") & Year == "0"))$new_name
+
+# create short function to read in separate files for each wave
+read_fun <- function(file, year){
+  print(year)
+  old.names <- (meta %>% filter(Year == year & class %in% c("match", "proc") & Include == "Yes"))$Item
+  new.names <- (meta %>% filter(Year == year & class %in% c("match", "proc") & Include == "Yes"))$new_name
+  z <- haven::read_sav(sprintf("%s/data/sav_files/%sp.sav", data_path, file)) %>%
+    left_join(haven::read_sav(sprintf("%s/data/sav_files/%spkal.sav", data_path, file))) %>%
+    left_join(haven::read_sav(sprintf("%s/data/sav_files/%sh.sav", data_path, file))) %>%
+    left_join(haven::read_sav(sprintf("%s/data/sav_files/%spequiv.sav", data_path, file))) %>%
+    left_join(haven::read_sav(sprintf("%s/data/sav_files/%spgen.sav", data_path, file))) %>%
+    left_join(haven::read_sav(sprintf("%s/data/sav_files/%shbrutto.sav", data_path, file))) %>%
+    # left_join(haven::read_sav(sprintf("%s/data/sav_files/%shost.sav", data_path, file))) %>%
+    # left_join(haven::read_sav(sprintf("%s/data/sav_files/%spost.sav", data_path, file))) %>%
+    select(one_of(all.old.cols), one_of(old.names)) %>%
+    setNames(c(all.new.cols, new.names)) %>%
+    mutate_all(funs(mapvalues(., seq(-1,-7,-1), c(NA, 0, rep(NA,5)), warn_missing = F))) %>%
+    group_by(PROC_SID) %>%
+    gather(key = new_name, value = value, -PROC_SID, -PROC_household, -Dem_DOB, -Dem_Sex) %>%
+    left_join(meta %>% filter(Year == year) %>% select(new_name, rev_code, mini, maxi, rule)) %>%
+    mutate(value = ifelse(rev_code == 1, reverse.code(keys=-1, items=value, mini=mini, maxi=maxi), value)) %>%
+    select(-rev_code, -mini, -maxi)
+}
+
+health.old.cols <- (meta %>% filter(dataset == "health"))$Item
+health.new.cols <- (meta %>% filter(dataset == "health"))$new_name
+
+health <- tbl_df(haven::read_sav(sprintf("%s/data/sav_files/health.sav", data_path))) %>%
+  filter(valid == 1 & syear < 2006) %>%
+  select(one_of(all.old.cols), one_of(health.old.cols)) %>%
+  setNames(c(all.new.cols, health.new.cols)) %>%
+  mutate_all(funs(mapvalues(., seq(-1,-7,-1), c(NA, 0, rep(NA,5)), warn_missing = F))) %>%
+  gather(key = new_name, value = value, -PROC_SID, -PROC_household, -Year) %>%
+  left_join(meta %>% filter(dataset == "health") %>% select(new_name, rule))
+
+match.dat <- tibble(
+  Year = seq(1984, 2004,1),
+  file = c(letters[1:21])) %>%
+  mutate(data = map2(file, Year, read_fun)) %>%
+  unnest(data) %>%
+  full_join(health) %>%
+  mutate(Dem_DOB = ifelse(Dem_DOB < 1850, NA_real_, Dem_DOB),
+         Dem_DOB = recode(Dem_DOB, `0` = NA_real_),
+         Dem_Sex = recode(Dem_Sex, `0` = NA_real_)) %>%
+  group_by(PROC_SID) %>%
+  mutate(
+         Dem_DOB = max(Dem_DOB, na.rm = T),
+         Dem_Sex = max(Dem_Sex, na.rm = T)) #%>%
+```
+
+Now, we need to recode the variables before compositing. In some cases, there are ordinal responses that make sense to collapse across levels. In other cases, we have to deal with missing data and such. 
+
+```{r clean match 2, eval = F}
+match.dat <- match.dat %>%
+  mutate(value = ifelse(new_name == "Psych_OthWorr" & value >= 1, 1, value),
+         value = ifelse(new_name %in% c("Bkgr_DadEdu", "Bkgr_MomEdu"),
+                        mapvalues(value, c(0,6,7,1,2,9,3,4,5), rep(0:2, each = 3), warn_missing = F), value),
+         value = ifelse(new_name == "Bkgr_Edu" & value > 0, 1, value),
+         value = ifelse(new_name %in% c("Fnc_HouseAssist", "HH_Internet"), 
+                        recode(value, `2` = 0), value),
+         value = ifelse(new_name == "HH_CndHouse", mapvalues(value, c(2,3,4,1), c(0,0,0,1), warn_missing = F), value),
+         value = ifelse(new_name == "Bkgr_MarStat", mapvalues(value, c(2,6,7,1,3,4,5),
+                        c(0,0,0,1,2,2,2), warn_missing = F), value),
+         value = ifelse(new_name == "HH_ClnHlp", mapvalues(value, c(3,1,2), c(0,1,1), warn_missing = F), value),
+         value = ifelse(new_name == "", mapvalues(value, c(98, 11,12,13,15,16, 21, 22, 31,32,33,34,
+                 35,36,37,38, 14,41,44,42,43), c(0, rep(1, 15), rep(2,3), rep(3,2)), warn_missing = F), value),
+         Dem_DOB = ifelse(is.infinite(Dem_DOB) == T | is.nan(Dem_DOB) == T, NA, Dem_DOB),
+         Dem_Sex = ifelse(is.infinite(Dem_Sex) == T | is.nan(Dem_Sex) == T, NA, Dem_Sex))
+```
+
+Now it's time to composite some variables. To do so, we need to create a small function that will do this for us. We have 5 ways we'll composite these variables: mean, mode, sum, selecting a specific year, and max. Which of these functions to use for different variables is indexed in our codebook, so all we have to do is use that as a guide for which to call. 
+
+After that's done, we will join this matching data with teh BFI data for use in matching (for socialization).  
+```{r clean match 3, eval = F}
+# create a small function for calculating the mode
+Mode <- function(x) {
+  ux <- unique(x)
+  ux <- ux[!is.na(ux)]
+  ux[which.max(tabulate(match(x, ux)))]
+}
+sum_fun <- function(df, Rule){
+  fun_call <- function(x, rule){
+    switch(rule,
+           average = mean(x, na.rm = T),
+           mode = Mode(x)[1],
+           sum = sum(x, na.rm = T),
+           select = unique(x)[1],
+           max = max(x, na.rm = T))
+  }
+  df %>%
+    group_by(PROC_SID, new_name, Dem_DOB, Dem_Sex, PROC_household) %>% 
+    summarize(value = fun_call(value, Rule)) %>% 
+    mutate(value = ifelse(is.nan(value) == T, NA,
+                 ifelse(is.infinite(value) == T, NA, value))) %>%
+    ungroup()
+}
+
+match.dat.wide <- match.dat %>%
+  group_by(rule) %>%
+  nest() %>%
+  mutate(data = map2(data, rule, possibly(sum_fun, NA_real_))) %>%
+  unnest(data, .drop = T) %>%
+  select(-rule) %>% # get rid of the rule variables
+  spread(key = new_name, value = value)  %>% # change to wide format 
+  left_join(bfi_match)
+```
+
+##Match Subjects Across Data Categories
+Our exclusion criteria is that participants had to have at least one wave of personality, matching, and life event data. So we'll get a vector of the subjects for each type, then merge these into a vector of subjects who appear in all 3. Then we'll trim out data sets for use in imputation, matching, and selection and socialization models for later.  
+```{r match subs, eval = F}
+bfi_subs   <- unique(bfi_wide$PROC_SID)
+match_subs <- unique(match.dat.wide$PROC_SID)
+le_subs    <- unique(le_dat$PROC_SID)
+
+subs <- bfi_subs[bfi_subs %in% match_subs]
+subs <- subs[subs %in% le_subs]
+
+match.dat.wide <- match.dat.wide %>% filter(PROC_SID %in% subs)
+bfi_wide       <- bfi_wide       %>% filter(PROC_SID %in% subs)
+bfi_match      <- bfi_match      %>% filter(PROC_SID %in% subs)
+le_dat         <- le_dat         %>% filter(PROC_SID %in% subs)
+
+save(match.dat, match.dat.wide, bfi_wide, le_dat, bfi_match, 
+     file = sprintf("%s/results/data.RData", data_path))
+```
+
+#Multiple Imputation
+##Missing Data Frame
+First, we check the missingness patterns of the match data by converting it to a missing data frame class object using the `missing_data.frame()` function in the `mi` package in `R`. We then use the `image()` function to graphically depict the missingness patterns.
+
+```{r mdf, eval = F}
+# MI doesn't like tibbles, so we need to unclass and reclass the data
+match.dat.wide <- data.frame(unclass(match.dat.wide)) # mi doesn't like tibbles
+
+mdf <- missing_data.frame(match.dat.wide)
+
+pdf(sprintf("%s/plots/%s.pdf", data_path, "mdf"), width = 9, height = 6.5)
+  image(mdf)
+dev.off()
+```
+
+Now, we want to ensure that `missing_data.frame()` has correctly detected the type of variable (nominal, ordinal, etc.), so that missing data will be imputed using the correct link function.  
+```{r change mdf, eval = F}
+
+des <- describe(match.dat.wide,fast = T)
+mdf <- change(data = mdf, y = rownames(des)[des$range >= 3],
+                   what = "type", to = "continuous")
+```
+
+##Multiple Imputation Procedure
+Now, we use the `mi()` function in the `mi` package in to complete the multiple imputation procedure. We create 10 imputed data sets (by setting n.chains to 10) and use 20 iterations for each. We have a lot of variables and a lot of observations, so we use parallel processing to run the procedure.  
+```{r run mi, eval = F}
+mi.res <- mi(mdf, n.chains = 10, n.iter = 20, parallel = T)
+```
+
+Now we compare the missingness patterns before and after imputation and see that we no longer have missing data.  
+```{r mi plot, eval = F}
+pdf(sprintf("%s/plots/%s.pdf", data_path, "mi"), width = 9, height = 6.5)
+  image(mi.res)
+dev.off()
+```
+
+And grab the imputed data sets from the MI procedure using the `complete()` function from the `mi` package, which saves them in a list.  
+
+```{r extract mi, eval = F}
+complete_fun <- function(mi){
+  clean_fun <- function(df){df %>% select(-contains("missing_"))}
+  tibble(chain = 1:10,
+         imp.data = mi::complete(mi)) %>%
+    mutate(imp.data = map(imp.data, clean_fun)) %>% 
+    unnest(imp.data)
+}
+
+imp.data <- complete_fun(mi.res)
+```
+
+
+Because we are estimating Bayesian growth curve models in STAN using the `brms` package, I'll take the imputed data and grab the imputed personality variables. STAN isn't cool with missing data, so this ensures that people won't get thrown out.  
+```{r, eval = F}
+bfi.imp <- unique(imp.data %>%
+  select(chain, PROC_SID, A1_1:O3_3) %>%
+  gather(key = item, value = value, A1_1:O3_3) %>%
+  separate(item, c("item", "wave"), sep = "_") %>%
+  separate(item, c("Trait", "item"),1) %>%
+  unite(item, wave, item, sep = "_") %>%
+  mutate(item = sprintf("T%s", item)) %>%
+  spread(key = item, value = value) %>%
+  left_join(bfi_wide %>% select(PROC_SID, sex12:age.c3)))
+```
+
+Now, we'll restructure the imputed data for the matching procedure. We'll keep all the matching variables as well as imputed personality items from 2005. The personality items will only be used in matching for tests of socialization.  
+```{r, eval = F}
+psw.imp.data <- imp.data %>%
+  gather(key = item, value = value, A1_1:O3_3) %>%
+  separate(item, c("item", "wave"), sep = "_") %>%
+  separate(item, c("Trait", "item"), 1) %>%
+  filter(wave == 1) %>%
+  group_by(chain, Trait, PROC_SID, wave) %>% 
+  summarize(M = mean(value, na.rm = T)) %>%
+  ungroup() %>%
+  unite(Trait, Trait, wave, sep = "_") %>%
+  spread(key = Trait, value = M) %>%
+  full_join(imp.data %>% select(chain:Val_Chrch))
+
+save(mdf, mi.res, file = paste(data_path, "results/mi_dat.RData", sep = "/"))
+save(imp.data, bfi.imp, psw.imp.data, file = paste(data_path, "results/mi_dat_small.RData", sep = "/"))
+rm("mi.res")
+```
+
+We only need the columns that aren't meant to define missingness patterns, so we write a simple function to do that for each element in the list of imputed data sets. Then we put them into a dataframe in which each of the imputed data sets is saved in a cell of the data frame, which will make it much easier to use for propensity score weighting and growth curve modeling.  
+```{r load mi, eval = F}
+load(url(paste(data_path, "results/mi_dat_small.RData", sep = "/")))
+nested.psw <- crossing(
+  Event = unique(le_dat$Event),
+  match_set = c("selection", "socialization"),
+  chain = 1:10
+)
+```
+
+#Propensity Score Matching
+
+Then, we perform propensity score matching using our imputed datasets using the `MatchIt` package. We then extract the matched sets and merge in our predictor variables. To test the effectiveness of the propensity score matching procedure, we examine the average standardized effect size in the balance tables. Minimal effect sizes are candidates for beng dropped from the propensity score matching, and large effect sizes mean our matching procedure wasn't effective.  We can also examine these using balance plots.
+
+The function below looks a little complicated. But here's what it does. We have to run the matching procedure for each of the 10 chains of imputed data for each life event for both socialization (matching variables + personality) and selection (matching variables only) sets. Some events are harder to match than others because the sample sizes are more unbalanced. For these, we'll use a larger matching ratio (8:1 instead of our default 4:1). In addition, some sets remained unbalanced despite teh change in the ratio. For these sets, we also reduced the caliper width from .25$\sigma$ to .05$\sigma$ (Partner Separation, Unemployment, Retirement, and First Job) or .01$\sigma$(Move in with a Partner). We do this because it is critical for our tests of socialization and selection that our samples be matched.  
+\footnotesize
+```{r psw funs, eval = T}
+# this function actually runs the propensity score weighting procedure
+psw_fun <- function(event, Chain, match_set){
+  print(sprintf("%s Chain %s", event, Chain))
+  Ratio <- ifelse(event %in% c("ChldMvOut", "ParDied", "Retire", "MoveIn"), 8, 4)
+  Caliper <- ifelse(match_set == "socialization" & 
+      event %in% c("SepPart", "Unemploy", "Retire", "FrstJob"), .05, 
+      ifelse(match_set == "socialization" & 
+      event %in% c("MoveIn"), .01, .25))
+  df <- psw.imp.data %>% filter(chain == Chain) %>% 
+    full_join(le_dat %>% filter(Event == event) %>%
+                select(Event, PROC_SID, le.group)) %>%
+    select(-chain, -Event) 
+  if(event == "Retire"){df <- df %>% filter(2005 - Dem_DOB > 40)}
+  if(event == "FrstJob"){df <- df %>% filter(2005 - Dem_DOB < 40)}
+  df <- df[complete.cases(df),]
+  df <- data.frame(unclass(df))
+  if(match_set == "socialization"){to.match <- colnames(df)[-which(colnames(df) %in% c("PROC_SID","le.group", 
+                   paste(rep(c("A", "C", "E", "N", "O"), each = 2), rep(2:3, times = 5), sep = "_")))]} 
+  else {to.match <- colnames(df)[-which(colnames(df) %in% c("PROC_SID","le.group", 
+                   paste(rep(c("A", "C", "E", "N", "O"), each = 3), rep(1:3, times = 5), sep = "_")))]}
+  match.formula <- as.formula(paste("le.group ~ ", paste(to.match, collapse=" + "), sep = " "))
+  y <- matchit(match.formula, data = df, method = "nearest", ratio = Ratio, caliper = Caliper)
+}
+
+# changing the data fed into psw into a data frame because it won't work with tibbles
+psw_df <- function(psw){psw$data <- data.frame(psw$data); psw}
+
+psw_df <- function(psw){
+  data.frame(match.data(psw))
+}
+```
+
+This function creates the balance table of the psw weights and filters the results into variables the matching procedure did not fix and those that it did. 
+```{r}
+unbalanced_fun <- function(x){
+  y <- summary(x, standardize = T)
+  raw <- y$sum.all %>%
+    mutate(var = rownames(.)) %>%
+    select(var, `Means Treated`, `Means Control`, `Std. Mean Diff.`)
+  smalldiff.var <- raw %>% filter(abs(`Std. Mean Diff.`) <= .05)
+  matched <- y$sum.matched %>%
+    mutate(var = rownames(.)) %>%
+    select(var, `Means Treated`, `Means Control`, `Std. Mean Diff.`)
+  unbalanced.var <- matched %>% filter(abs(`Std. Mean Diff.`) >= .2)
+  return(list(raw = raw, matched = matched, 
+              unbalanced = unbalanced.var,smalldiff = smalldiff.var))
+}
+
+```
+
+\normalsize
+
+Let's run it now!  
+\footnotesize
+```{r run psw, eval = F}
+nested.psw <- nested.psw %>%
+  filter(chain == 1) %>%
+  mutate(psw = pmap(list(Event, chain, match_set), psw_fun),
+         psw.df = map(psw, possibly(psw_df, NA_real_)),
+         bal.df = map(psw, unbalanced_fun),
+         raw = map(bal.df, ~.$raw),
+         matched = map(bal.df, ~.$matched),
+         unbal.tab = map(bal.df, possibly(~.$unbalanced, NA_real_)),
+         smalldiff.tab = map(bal.df, possibly(~.$smalldiff, NA_real_)))
+
+nested.psw <- nested.psw %>% filter(!(match_set == "socialization" & chain == 1 &
+      Event %in% c("FrstJob"))) %>% bind_rows(nested.psw2)
+
+save(nested.psw, file = paste(data_path, "results/psw.RData", sep = "/"))
+nested.psw <- nested.psw %>% select(-psw)
+save(nested.psw, file = paste(data_path, "results/psw_small.RData", sep = "/"))
+```
+
+\normalsize
+
+##Balance Plots
+In these plots, substantial reductions in effect sizes are observed for most variables (blue lines), with only one variable showing an increase in effect size (red lines), but only a seemingly trivial increase. Closed red circles indicate a statistically significant difference, many of which occur before weighting, none after.   
+\footnotesize
+```{r bal plots, eval = F}
+plot_fun <- function(df, event, set){
+  plot <- df %>% 
+    mutate(type = factor(type, level = c("raw", "matched"))) %>%
+    ggplot(aes(x = type, y = `Std. Mean Diff.`)) + 
+    scale_y_continuous(limits = c(-5,5), breaks = seq(-5,5,2)) +
+    geom_point() + 
+    geom_line(aes(group = var), size = .25, alpha = .8) +
+    labs(x = NULL, y = "Standardized Mean Difference", 
+         title = sprintf("%s", event)) +
+    facet_wrap(~chain, ncol = 2) +
+    theme_classic()
+  # ggsave(sprintf("%s/plots/psw_bal_%s.png", data_path, event), width = 8, height = 10)
+}
+
+
+print_plot_fun <- function(p, Chain){
+  p$main <- sprintf("Imputed dataset %s", gsub("chain.", "", Chain))
+  p
+}
+
+nested.psw %>%
+  unnest(raw) %>% mutate(type = "raw") %>%
+  full_join(nested.psw %>% unnest(matched) %>% mutate(type = "matched"))%>%
+  group_by(Event) %>%
+  nest() %>% 
+  mutate(plot = map2(data, Event, plot_fun))
+
+par(mfrow = c(2,5))
+nested.psw <- nested.psw %>% 
+  mutate(plots = map(psw, possibly(~plot(., plots = "es"), NA_real_)),
+         plots = map2(plots, chain, possibly(print_plot_fun, NA_real_))) 
+```
+
+##Balance Tables
+Once propensity scores are estimated, `bal.table()` produces a table that shows how well the resulting weights succeed in manipulating the groups so that they match on pre-adolescent matching characteristics. 
+
+After matching, none of the variables remained unbalanced (standardized mean differences > .2), so there is no table of unbalanced variables (yay!).  
+\footnotesize
+```{r bal tabs, message = F, warning = F, results = 'asis', eval = T}
+load(url(paste(data_path, "results/psw_small.RData", sep = "/")))
+load(url(paste(data_path, "results/mi_dat_small.RData", sep = "/")))
+# this table shows variables that are not matched after weighting
+# unbal.tab <- nested.psw %>% 
+#   filter(match_set == "socialization") %>%
+#   unnest(unbal.tab, .drop = T) %>% 
+#   group_by(Event, var) %>% 
+#   #summarize_at(vars(`Means Treated`:`Std. Mean Diff.`), funs(mean(., na.rm = T))) 
+#   summarize(mean = mean(`Std. Mean Diff.`, na.rm = T)) %>%
+#   spread(key = Event, value = mean)
+# kable(unbal.tab, "html", longtable = T, booktabs = T, digits = 2,
+#       caption = "Unbalanced Variables after Propensity Score Weighting") %>%
+#   kable_styling(bootstrap_options = c("striped","repeat_header"),full_width = F)
+  
+# this table shows variables that were already matched prior to weighting
+smalldiff.tab <- nested.psw %>% 
+  unnest(smalldiff.tab, .drop = T) %>% 
+  group_by(Event, var) %>% 
+  #summarize_at(vars(`Means Treated`:`Std. Mean Diff.`), funs(mean(., na.rm = T))) 
+  summarize(mean = mean(`Std. Mean Diff.`, na.rm = T)) %>%
+  spread(key = Event, value = mean)
+kable(smalldiff.tab, "html", longtable = T, booktabs = T, digits = 2,
+      caption = "Balanced Variables after Propensity Score Weighting") %>%
+  kable_styling(bootstrap_options = c("striped","repeat_header"),full_width = F)
+```
+
+## Plots
+In addition to the balance plots that highlight the attenuation of mean differences in general, it is also interesting to see this for specific variables. To do that, we'll calculate Cohen's d (standardized mean differences) between groups for each matching variable in both the matched and unmatched sets. Then, we'll plot them together.  
+```{r}
+cohens_d <- function(x, y) {
+    lx <- length(x)- 1; ly <- length(y)- 1
+    md  <- mean(x, na.rm = T) - mean(y, na.rm = T)        ## mean difference (numerator)
+    csd <- lx * var(x, na.rm = T) + ly * var(y, na.rm = T)
+    csd <- csd/(lx + ly); csd <- sqrt(csd)                     ## common sd computation
+    cd  <- md/csd                        ## cohen's d
+    return(cd)
+}
+
+d_fun <- function(df, Var, chain){
+  dat <- df %>% filter(chain == chain) 
+  d <- with(dat, cohens_d(value[le.group == 1], value[le.group == 0]))
+}
+levs <- c(colnames(psw.imp.data)[-c(1,2,10)], "Age")
+
+diff <- psw.imp.data %>% filter(chain == 1) %>%
+  mutate(match_set = "Unmatched") %>% 
+  full_join(le_dat %>% select(PROC_SID, Event, le.group))  %>%
+      # filter(Event %in% c("FrstJob", "MoveIn", "PartDied"))) %>%
+  filter(!is.na(Event) & !is.na(match_set)) %>%
+  full_join(nested.psw %>% 
+      filter(match_set == "socialization" & chain == 1) %>%
+      # filter(Event %in% c("FrstJob", "MoveIn", "PartDied")) %>%
+      unnest(psw.df) %>%
+      select(-weights)) %>%
+  mutate(Dem_Sex = as.numeric(as.character(Dem_Sex)),
+         Age = 2005-Dem_DOB) %>% select(-Dem_DOB) %>%
+  rename(BFI_E.W1 = E_1, BFI_A.W1 = A_1, BFI_C.W1 = C_1, BFI_N.W1 = N_1, BFI_O.W1 = O_1) %>%
+  mutate_if(is.factor, funs(as.numeric(as.character(.)))) %>%
+  gather(key = var, value = value, -chain, -PROC_SID, -Event, -PROC_household, -match_set, -le.group) %>%
+  separate(var, c("Category", "Item"), sep= "_", remove = F) %>%
+  # mutate(var = factor(var, levels = rev(levs))) %>%
+  group_by(Event, match_set, var, chain, Category, Item) %>%
+  nest() %>%
+  mutate(d = pmap(list(data, var, chain), d_fun))
+# save(diff, file = sprintf("%s/results/matching_diag.RData", data_path))
+# save(diff, file = sprintf("%s/results/mean_diff.RData", data_path))
+
+events <- tibble(
+  old = c("none", "Married", "MoveIn", "Divorce", "SepPart", "PartDied", "LeftPar", 
+          "ChldMvOut", "ChldBrth", "ParDied", "Unemploy", "Retire", "FrstJob"),
+  new = c("Mean", "Marriage", "Moved in with Partner", "Divorce", "Separation from Partner", 
+          "Death of Partner/Spouse", "Leaving Parental Home", "Child Leaves Home", 
+          "Birth of Child", "Death of Parent",   "Unemployment", "Retirement", "First Job"),
+  breaks = c("Mean", "Marriage", "Moved in\nwith Partner", "Divorce", "Separation\nfrom Partner", 
+          "Death of\nPartner/Spouse", "Leaving\nParental Home", "Child Leaves\nHome", 
+          "Birth of\nChild", "Death of\nParent",   "Unemployment", "Retirement", "First Job")
+)
+
+diff_fun <- function(event){
+p<-diff %>% unnest(d, .drop = T) %>% #filter(Category == "HH") %>%
+  filter(var != "distance") %>%
+  filter(Event == event) %>%
+  group_by(Event, match_set, var) %>%
+  summarize(d = mean(d)) %>% ungroup() %>%
+  mutate(match_set = recode(match_set, `socialization` = "Matched"),
+         Event = mapvalues(Event, events$old, events$breaks),
+         Event = factor(Event, levels = events$breaks)) %>%
+  ggplot(aes(x = var, y = d, shape = match_set)) +
+  scale_shape_manual(values = c(19,1)) +
+  scale_y_continuous(limits = c(-1.5, 1.5), breaks = seq(-1, 1, 1)) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed", size = .25) +
+  geom_point(size = 1.5) +
+  labs(y = "Cohen's d", x = NULL, shape = NULL, title = event) +
+  # coord_flip() +
+  facet_grid(.~Event) +
+  theme_classic() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(face = "bold", size = rel(.7), angle = 45, hjust = 1),
+        axis.text.y = element_text(face = "bold", size = rel(1.2)),
+          axis.title = element_text(face = "bold", size = rel(1.2)),
+          strip.text = element_text(face = "bold"),
+        plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5),
+          legend.text = element_text(face = "bold"),
+          legend.title = element_text(face = "bold", size = rel(1.2)))
+p
+}
+```
+
+```{r, fig.width = 10, fig.height=4, results = 'asis'}
+lapply(events$old[events$old != "none"], function(x){
+  cat('\n\n####', x, '\n\n  ')
+  diff_fun(x)
+})
+# ggsave(sprintf("%s/results/plots/psm_match.png", data_path), width = 10, height = 4)
+```
+
+
+What about the distribution of propensity scores? Well, we can also look at the propensity score matched sets. The chunk below will take the propensity scores ("distances" from the `matchit` object) and plot those as a function of group and weight. Larger points on the graph indicate participants who were weighted more. For example, a parpticipant with a from the Event group who had four matches from the no event group would be weighted 1, while each of their matches would be weighted .25.  We don't actually use the weights because are matching, but they are useful to visualize essentially how the matching procedure approximates using survey weights.  
+```{r}
+sample_fun <- function(df){
+  df %>% filter(row_number() %in% sample(1:nrow(df), 200))
+}
+
+nested.psw %>% 
+  filter(!Event %in% c("MomDied", "DadDied")) %>%
+  mutate(sample = map(psw.df, sample_fun)) %>%
+  unnest(sample) %>% 
+  select(Event:PROC_SID, le.group, distance, weights) %>% 
+  mutate(le.group = mapvalues(le.group, c(0,1), c("No Event", "Event")),
+         Event = mapvalues(Event, events$old, events$breaks),
+         Event = factor(Event, levels = events$breaks)) %>%
+  filter(chain == 1 & match_set == "socialization") %>% 
+  ggplot(aes(x = le.group, y = distance)) + 
+  scale_size_continuous(range = c(.1,3)) +
+  scale_y_continuous(breaks = seq(0,1,.5), labels = c("0", ".5", "1")) +
+  geom_jitter(aes(size = distance), shape = 1, width = .15) + 
+  labs(x = NULL, y = "Propensity Score") +
+  coord_flip() + 
+  facet_wrap(~Event, nrow = 3) + 
+  theme_classic() +
+  theme(legend.position = "none",
+        strip.text = element_text(face = "bold", size = rel(1)),
+        axis.text = element_text(face = "bold", size = rel(1.2)),
+        axis.title = element_text(face = "bold", size = rel(1.2)))
+# ggsave(file = sprintf("%s/results/plots/ps_plot.png", data_path), 
+       # width = 10, height = 6)
+```
+
+
+
+## Group Differences
+Finally, let's make a table of the some of the demographic and sample characteristics of the matched samples. Below, I create a table that includes the sample sizes of each group for each event for both matched (socialization) and raw samples, mean and standard deviation of age of people who experienced the events and the percent of people who experienced the events who were women.  
+```{r raw diff, results = 'asis'}
+
+ events <- tibble(
+  old = c("none", "Married", "MoveIn", "Divorce", "SepPart", "PartDied", "LeftPar", 
+          "ChldMvOut", "ChldBrth", "ParDied", "Unemploy", "Retire", "FrstJob"),
+  new = c("Mean", "Marriage", "Moved in with Partner", "Divorce", "Separation from Partner", 
+          "Death of Partner/Spouse", "Leaving Parental Home", "Child Leaves Home", 
+          "Birth of Child", "Death of Parent",   "Unemployment", "Retirement", "First Job"),
+  breaks = c("Mean", "Marriage", "Moved in\nwith Partner", "Divorce", "Separation\nfrom Partner", 
+          "Death of\nPartner/Spouse", "Leaving\nParental Home", "Child Leaves\nHome", 
+          "Birth of\nChild", "Death of\nParent",   "Unemployment", "Retirement", "First Job")
+)
+
+options(knitr.kable.NA = '')
+options(papaja.na_string = "")
+options(knitr.table.format = "html")
+dem <- le_dat %>% mutate(chain = 1, data = "raw", Dem_Sex = factor(Dem_Sex)) %>%
+  full_join(nested.psw %>% 
+    filter(match_set == "socialization" & chain == 1) %>% 
+    unnest(psw.df) %>% 
+    select(Event, chain, PROC_SID, Dem_DOB, Dem_Sex, le.group) %>%
+    mutate(data = "matched")) %>%
+  mutate(age = 2005-Dem_DOB) %>% 
+  #select(-le.value)) %>%
+  filter(!is.na(le.group)) %>%
+  group_by(Event, data, chain) %>%
+  mutate(m.age = mean(age[le.group == 1], na.rm = T),
+         sd.age = sd(age[le.group == 1], na.rm = T)) 
+
+dem %>%
+  group_by(Event, chain, data, le.group, m.age, sd.age) %>%
+  dplyr::summarize(n = n()) %>%
+  full_join(dem %>% group_by(Event, data, Dem_Sex, le.group, chain) %>% summarize(n = n()) %>%
+  unite(temp, Dem_Sex, le.group, sep = ".") %>% spread(key = temp, value = n) %>%
+  mutate(perc_women = `2.1`/rowSums(cbind(`1.1`, `2.1`))*100) %>%
+    select(Event, chain, data, perc_women)) %>%
+  group_by(Event, data, le.group) %>%
+  summarize_at(vars(m.age:perc_women), funs(mean(., na.rm = T))) %>%
+  ungroup() %>%
+  spread(key = le.group, value = n) %>%
+  mutate(Frequency = sprintf("%.0f (%.0f)", `1`, (`1` + `0`))) %>%
+  mutate_at(vars(m.age:perc_women), funs(sprintf("%.2f", .))) %>%
+  select(-`0`, -`1`) %>% 
+  gather(key = measure, value = value, m.age:Frequency) %>%
+  filter(data == "matched") %>%
+  unite(data, measure, data, sep = ".") %>%
+  spread(key = data, value = value) %>%
+  select(Event, contains("Frequency"), contains("age"), everything()) %>%
+  filter(!(Event %in% c("MomDied", "DadDied"))) %>%
+  mutate(Event = mapvalues(Event, events$old, events$new),
+         Event = factor(Event, levels = events$new)) %>%
+  arrange(Event) %>%
+  kable(., "html", booktabs = T, escape = F,
+        col.names = c("Life Event", rep(c("Matched"), times = 4)),
+        caption = "Descriptive Statistics of Individuals Who Experienced a Specific Major Life Event") %>%
+  kable_styling(full_width = F, font_size = 8) %>%
+  #kable_styling(full_width = F) %>%
+  add_header_above(c(" " = 1, "Frequency" = 1, "M" = 1, "SD" = 1, "% women" = 1)) %>%
+  add_header_above(c(" " = 2,  "Age in 2005" = 2, " " = 1)) %>%
+  footnote(general = "M = mean age in 2005; SD = standard deviation of age in 2005.") 
+```
+
+
+# Selection Effects: Logistic Regressions
+Made it to selection! For the selection models, we are using Bayesian logistic regression models to estimate the log odds of a participant experiencing an event as predicted by their personality in 2005. We'll do this for each combination of trait, event, and chain (from the imputed data sets) with the matched sets as well as for each trait and event combination for the raw data from 2005. Doing both unmatched and matched will allow us to examine whether matching attenuates selection effects.  
+## Run Models
+```{r, eval = F}
+load(url(sprintf("%s/results/psw_small.RData", data_path)))
+load(url(sprintf("%s/results/mi_dat_small.RData", data_path)))
+
+bfi_selection <- crossing(
+  Event = c(unique(nested.psw$Event)),
+  Trait = unique(bfi_wide$Trait),
+  match = c("Matched", "Unmatched")
+  )
+
+sel_fun <- function (event, trait, match){
+  k <- 1#ifelse(event == "ParDied" & trait == "A" & match == "Matched", 4, 1)
+  lapply(k:10, function(x){
+    print(paste(event, trait, match, x), sep = " ")
+    if(match == "Matched"){
+      subs <- unique((nested.psw %>% 
+          filter(match_set == "selection" & chain == 1 & Event == event) %>%
+          unnest(psw.df))$PROC_SID)
+      df <- bfi.imp %>% filter(chain == x & Trait == trait & PROC_SID %in% subs)
+    } else {
+      df <- bfi.imp %>% filter(chain == x & Trait == trait) 
+    }
+    df <- df %>%
+      mutate(value = rowMeans(cbind(T1_1, T1_2, T1_3), na.rm = T)) %>%
+        select(PROC_SID, sex12:age.c3, value) %>%
+        left_join(le_dat %>% filter(Event == event) %>% select(PROC_SID, le.group))
+      mod <- rstanarm::stan_glm(
+        le.group ~ value, family = binomial(link = "logit"), data = df
+      )
+      file <- sprintf("%s/results/selection/%s_%s_%s_chain%s.RData", data_path, trait, event, match, x)
+      save(mod, file = file)
+      rm(mod)
+  return(T)
+  })
+}
+
+start <- Sys.time()
+bfi_selection <- bfi_selection %>%
+  mutate(b.sel.mod = pmap(list(Event, Trait, match), sel_fun))
+end <- Sys.time()
+```
+
+
+## Pool Results
+Because we had 10 imputations of the data, we have to pool the models across chains. Because these logistic regressions are not unwieldly in size, we can simply combine the samples from the Bayesian models across imputations and then save the result as a stan model object. Then, we can use default functions from the `rstanarm` package to extract the results. 
+```{r}
+stantab_fun <- function(event, trait, match){
+    models <- lapply(1:10, function(x){
+      print(x)
+      file <- sprintf("%s/results/selection/%s_%s_%s_chain%s.RData", 
+                      data_path, trait, event, match, x)
+      load(url(file))
+      return(mod)
+  })
+    sflist <- lapply(models, "[[", "stanfit")
+    models[[1]]$stanfit <- rstan::sflist2stanfit(sflist)
+    models[[1]]
+}
+```
+
+## Table Results
+Now we'll run the pooling and extract teh samples (to visualize the posterior distributions). 
+```{r, eval = F}
+bfi_selection <- crossing(
+  Event = c(unique(le_dat$Event)),
+  Trait = unique(bfi_wide$Trait),
+  match = c("Matched", "Unmatched")
+  ) %>%
+  mutate(pool = pmap(list(Event, Trait, match), stantab_fun),
+         samples = map(pool, ~gather_samples(., value)),
+         qi = map(samples, mean_qi))
+save(bfi_selection, file = sprintf("%s/results/selection.RData", data_path))
+```
+
+
+## Plots {.tabset}  
+Now, the fun part. Next, we'll use the samples to plot the posterior distributions (after converting log odds to odds) as well as the mean estimates. We'll do this for all trait x event x matching combinations. Note that within a Bayesian framework, we aren't talking about significance, but I will highlight those models whose mean estimates suggest that in 95\% of our samples, the highest posterior density interval does not include 1 (no difference in odds).  
+```{r, eval = F}
+load(url(sprintf("%s/results/selection.RData", data_path)))
+bfi_samples <- bfi_selection %>% unnest(samples) %>%
+  filter(term == "value") %>%
+  mutate(estimate = exp(estimate))
+save(bfi_samples, files = sprintf("%s/results/selection_samples.RData", data_path))
+
+bfi_selection <- bfi_selection %>% select(-samples, -pool)
+
+save(sel.tab, bfi_selection, file = sprintf("%s/results/sel.tab.RData", data_path))
+```
+
+```{r}
+load(url(sprintf("%s/results/selection.RData", data_path)))
+load(url(sprintf("%s/results/selection_samples.RData", data_path)))
+load(url(sprintf("%s/results/sel.tab.RData", data_path)))
+
+bfi_qi <- bfi_selection %>% unnest(qi) %>%
+  filter(term == "value") %>%
+  mutate(sig = ifelse(sign(conf.low) == sign(conf.high), "sig", "ns")) %>%
+  mutate_at(vars(estimate:conf.high), funs(exp))
+
+sel_plot_fun <- function(match_set){
+p <- bfi_samples %>% full_join(bfi_qi %>% select(Event:term, sig)) %>%
+    filter(!(Event %in% c("MomDied", "DadDied"))) %>%
+  mutate(Trait = factor(Trait, levels = c("E", "A", "C", "N", "O")),
+         Event = mapvalues(Event, events$old, events$new),
+         Event = factor(Event, rev(events$new))) %>%
+  ggplot(aes(y = Event, x = estimate)) +
+  scale_x_continuous(limits = c(.4, 1.6), breaks = seq(.5, 1.5, .5), labels = c(".5", "1", "1.5")) +
+  # geom_density_ridges(data = . %>% filter(match == "Matched"), aes(fill = sig), rel_min_height = 0.025, scale = 4) +
+    geom_halfeyeh(data = . %>% filter(match == match_set), aes(fill = sig)) +
+    geom_blank(data = bfi_samples %>% filter(!(Event %in% c("MomDied", "DadDied"))) %>%
+                 mutate(Trait = factor(Trait, levels = c("E", "A", "C", "N", "O")),
+                        Event = mapvalues(Event, events$old, events$new),
+                        Event = factor(Event, rev(events$new)))) +
+    # geom_halfeyeh(data = . %>% filter(match == "Matched" & sig == "sig"), fill = "lightgoldenrod") +
+  geom_vline(aes(xintercept = 1), linetype = "dashed") +
+  scale_fill_manual(values = c("gray", "lightgoldenrod")) +
+  labs(x = "OR", y = NULL, fill = NULL, color = NULL, title = match_set) +
+  facet_wrap(~Trait, nrow = 1) +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(face = "bold", size = rel(1.2)),
+        strip.text = element_text(face = "bold", size = rel(2)),
+        axis.title = element_text(face = "bold", size = rel(1.2)),
+        legend.text = element_text(face = "bold", size = rel(1.2)))
+# ggsave(p, file = sprintf("%s/results/plots/selection_%s_posterior.png", data_path, match_set),
+       # width = 14, height = 6)
+p
+}
+```
+
+### Sample Plots
+Here is a small sample plot of the posterior distributions for use in my presnetation.  
+```{r}
+bfi_samples %>% full_join(bfi_qi %>% select(Event:term, sig)) %>% 
+  filter(Trait %in% c("C", "E") & Event == "FrstJob") %>%
+  ggplot(aes(y = Event, x = estimate)) +
+    scale_x_continuous(limits = c(.4, 1.6), breaks = seq(.5, 1.5, .5), 
+                       labels = c(".5", "1", "1.5")) +
+    geom_halfeyeh(data = . %>% filter(match == "Matched"), aes(fill = sig)) + 
+    geom_vline(aes(xintercept = 1), linetype = "dashed") +
+    scale_fill_manual(values = c("gray", "lightgoldenrod")) +
+    labs(x = "OR", y = NULL, fill = NULL, color = NULL) +
+    facet_wrap(~Trait, nrow = 1) +
+    theme_classic() +
+    theme(legend.position = "none",
+          axis.text = element_text(face = "bold", size = rel(1.2)),
+          strip.text = element_text(face = "bold", size = rel(2)),
+          axis.title = element_text(face = "bold", size = rel(1.2)),
+          legend.text = element_text(face = "bold", size = rel(1.2)))
+# ggsave(file = sprintf("%s/results/plots/selection_example_plot.png", data_path),
+       # width = 6, height = 2)
+```
+
+```{r, results='asis'}
+lapply(c("Matched", "Unmatched"), function(x){
+  cat('  \n\n### ', x, ' Selection Effects\n\n  ', sep ="")
+  sel_plot_fun(x)
+})
+```
+
+
+
+
+#Socialization Effects: Growth Models
+The growth models are a little more complicated. Each of the 700 models themselves are so large after we run them (each is several GB), we can't pool them like we did the Bayesian logistic regression models. We'd need a computer with some 30 GB of RAM and several additional months. So instead, we're going to use Rubin's Rules to pool the estimates. To do that, though, we need to extract certain elements from the models (e.g. standard errors of simple effects estimates, hypothesis tests of means, predicted values of both fixed and random effects), which is what the functions below do.  
+
+## Define Functions {.tabset}  
+### Standard Errors  
+Below we extract the variance-covariance matrix from each model and use it to estimate the standard error of the simple effects for the fixed effect parameters.  
+```{r SE fun}
+# function to get the standard errors
+se_fun <- function(vcov_mat, x, m){
+  print("se_fun")
+  se_map <- function(vcov, parameter, w){
+    z <- 1
+    vcov[parameter, parameter] + 2 * z * vcov[parameter, w] + z^2 * vcov[w, w]
+  }
+  cols <- colnames(vcov_mat)
+  x <- cols[grepl(x,cols) & !grepl(":", cols)]
+  se <- expand.grid(
+    parameter = c("Intercept", x),
+    term = m, 
+    stringsAsFactors = F
+  ) %>% tbl_df() %>%
+    mutate(se = map2_dbl(parameter, term, ~se_map(vcov_mat, .x, .y)),
+           # term = str_replace(term, "groups", ""), 
+           parameter = ifelse(parameter == "Intercept", parameter, "Slope"))
+return(se)
+}
+
+```
+
+### Hypothesis Tests  
+We've coded our growth curve models such that the coefficients tell us about mean differences among groups, but we are also interested in the mean estimates for each group because it's useful to be able to say, for example, that (1) the groups changed differently such that (2) people who experienced the event didn't cahnge (arrested development) while (3) people who didn't experience the event increased in a trait over time. We'll use the `hypothesis()` function from `brms`.  
+```{r hypoth fun}
+# function to test hypotheses for slopes and intercepts in each group
+hyp_fun <- function(fit, event){
+  print("hyp_fun")
+  me <- 
+    fixef(fit) %>% data.frame %>% mutate(term = rownames(.)) %>%
+    filter(term %in% c("Intercept", "new.wave")) %>%
+    mutate(term.type = mapvalues(term, unique(term), c("Intercept", "Slope")),
+           term = "No Event") %>%
+    setNames(c("b", "SE", "lower", "upper", "term", "term.type"))
+  if(event != "none"){
+  h <- c(
+    "new.wave + new.wave:le.group1 = 0",
+    "Intercept + le.group1 = 0"
+  )
+  h <- hypothesis(fit, h, alpha = .05)
+  me <- h$hypothesis %>% data.frame %>% 
+    mutate(term = "Event", term.type = c("Slope", "Intercept")) %>% 
+    dplyr::select(-Evid.Ratio, -Star) %>%
+    setNames(c("b", "SE", "lower", "upper", "term", "term.type")) %>%
+    full_join(me)
+  }
+  return(me)
+}
+```
+
+### Predicted Values
+For plotting fixed and random trajectories over time, we want to get the predicted values from the model across the study period. To do this, we'll use the `fitted()` function for the fixed effects with `re_formula` set to NA to ignore the random effects (for now). Then, we'll create a data frame for each wave x event x wave x participant combination and use the `predict()` function to get person level predictions. 
+```{r pred fun}
+# function to get predicted fixed and random effects for plotting
+plot_fun <- function(fit, event){
+  print("plot_fun")
+    frame <- crossing(
+      new.wave = seq(0,2, .01),
+      le.group = 0:1
+    ) %>%
+      tbl_df() 
+  if (event == "none"){
+    frame <- frame %>% dplyr::select(-le.group)
+  } 
+  combine_fun <- function(x,y){
+      cbind(x,y)
+  }
+    
+   frame <- frame %>% 
+     nest() %>%
+     mutate(pred = map(data, ~fitted(fit, newdata = ., re_formula = NA, probs = c(.025, .975))),
+            data = map2(data, pred, combine_fun)) %>% 
+     unnest(data, .drop = T)
+   
+   ranef_frame <- fit$data %>%
+     nest() %>%
+     mutate(pred = map(data, ~predict(fit, probs = c(.025, .975))),
+            data = map2(data, pred, combine_fun)) %>%
+     unnest(data, .drop = T)
+   return(list(fixed = frame, ranef = ranef_frame))
+}
+```
+
+### Pooling  
+Sorry in advance because there is a lot happening with this pooling function. The basic logic of it is this. These growth models are so large that most computers can only handle one at a time. So I need to load each model into R separately, extract everything I could possibly need from it, discard the model, and then save the stuff I need. I do this for each trait x event combination 10 times then pool my extracted results across those imputations using Rubin's rules.  
+```{r pool fun}
+pool_fun <- function(event, trait){
+  cat(event, trait, sep = " ")
+  nchains = 10
+  
+eff_fun <- function(chain){
+  # load in teh model
+    file <- sprintf("%s/unpooled/%s_%s_chain%s_brm_cv.RData", model_path, trait, event, chain)
+    load(url(file))
+    # fixed effects, and vcov matrix
+    fixeffs <- fixef(fit, probs = c(.025,.975))
+    rownames(fixeffs) <- gsub("1", "", rownames(fixeffs)); colnames(fixeffs) <- gsub("1", "", colnames(fixeffs))
+    vc <- vcov(fit, probs = c(.025,.975))
+    rownames(vc) <- gsub("1", "", rownames(vc)); colnames(vc) <- gsub("1", "", colnames(vc))
+    dvc <- diag(vc)
+    
+    # now we want the random effects. Unfortuantely, the coef function doesn't work how
+    # it does for lme4, so I have to extract the random effects and add them to the 
+    # fixed effects to get individual level slopes and intercepts. I need these because
+    # I want to plot the distribution of random slopes later and want to use the random
+    # intercepts to calculate Cohen's d
+    raneffs <- broom::tidy(fit, probs = c(.025, .975))
+    ind_ranef <- raneffs %>% tbl_df %>%
+      filter(grepl("r_PROC_SID\\[", term)) %>%
+      mutate(term = str_replace(term, "r_PROC_SID", ""),
+             term = str_replace(term, "\\[*", ""),
+             term = str_replace(term, "\\]$", "")) %>%
+      separate(term, c("PROC_SID", "term"), sep = ",")
+    eff <- fixef(fit, probs = c(.025, .975))[, 1]
+    if(event != "none"){
+      ind_coef <- le_dat %>% filter(Event == event & PROC_SID %in% unique(ind_ranef$PROC_SID)) %>%
+        select(PROC_SID, le.group) %>% 
+        full_join(ind_ranef %>% mutate(PROC_SID = as.numeric(PROC_SID))) %>%
+        mutate(term = str_replace(term, "le.group1", "le.group"), 
+               b = ifelse(term == "Slope", eff["new.wave"] + eff["new.wave:le.group"]*le.group + estimate,
+               eff["Intercept"] + eff["le.group"]*le.group + estimate))
+      } else{
+        ind_coef <- ind_ranef %>% mutate(PROC_SID = as.numeric(PROC_SID)) %>%
+          mutate(b = ifelse(term == "Slope", eff["new.wave"] + estimate, eff["Intercept"] + estimate),
+                 le.group = 0)
+      }
+    
+    # this is just the lazy way to get the variance estiamtes
+    L2 <- raneffs %>% tbl_df() %>%
+      filter(grepl("sd_", term) | grepl("cor_", term) | term == "sigma") %>% 
+      mutate(type = "raneff") %>%
+      mutate_at(vars(estimate:upper), funs(ifelse(grepl("cor_", term) == F, .^2,.))) %>%
+      mutate(term = ifelse(term != "sigma", str_extract(term, "(?<=__).*$"), term),
+             term = mapvalues(term, unique(term), 
+          c("\\tau_{00}", "\\tau_{01}", "\\tau_{11}", "\\sigma^2")))
+    
+    # predicted values, se's, and hypothesis tests
+    pred <- plot_fun(fit, event)
+    fixef_pred <- pred$fixed; ranef_pred <- pred$ranef
+    se <- if(event != "none"){se_fun(vc, "new.wave", "le.group")} else {NA_real_}
+    h <- hyp_fun(fit, event)
+    
+    results <- list(fx = fixeffs, vc = vc, L2 = L2, re = ind_coef, hyp = h,
+                    fixef_pred = fixef_pred, ranef_pred = ranef_pred, se = se)
+    return(results)
+  }
+  
+# do the function above for each chain
+res <- tibble(chain = 1:nchains) %>%
+    mutate(fx = map(chain, eff_fun),
+           vc = map(fx, ~.$vc),
+           L2 = map(fx, ~.$L2),
+           re = map(fx, ~.$re),
+           hyp = map(fx, ~.$hyp),
+           fixef_pred = map(fx, ~.$fixef_pred),
+           ranef_pred = map(fx, ~.$ranef_pred),
+           se = map(fx, ~.$se),
+           fx = map(fx, ~.$fx))
+
+# pool across chains
+vcov_mean    <- apply(simplify2array(res$vc), 1:2, mean)
+fixeffs_mean <- apply(simplify2array(res$fx), 1:2, mean)
+fixeff_var  <- apply(simplify2array(res$fx), 1:2, var)
+raneffs_mean <- diag(vcov_mean)
+
+# Rubin's rules
+T <- raneffs_mean + (1 + nchains^(-1)) * fixeff_var[,"Estimate"] # ??
+r <- (1 + nchains^(-1)) * fixeff_var/raneffs_mean# RIV value 
+df <- (nchains - 1) * (1 + r^(-1))^2
+se <- sqrt(T)
+t.val <- fixeffs_mean[,"Estimate"]/se
+p <- 2 * (1 - pt(abs(t.val), df = df))
+CI = qt(.975, df = df)*se
+
+# fixed effect terms
+fixeff <- fixeffs_mean %>% data.frame %>% mutate(term = rownames(.)) %>%
+  setNames(c("estimate", "std.error", "lower", "upper", "term")) %>%
+  mutate(type = "fixeff",
+         term = str_replace(term, "new.wave", "Slope"))
+
+# random effects
+raneff <- res %>% unnest(L2) %>%
+  group_by(term, type) %>% 
+  summarize_all(funs(mean)) %>%
+    ungroup()
+
+# pool the individual level estiamtes
+pooled_re <- res %>% unnest(re) %>% 
+  group_by(term, PROC_SID, le.group) %>% 
+  summarize_all(funs(mean)) %>%
+  ungroup()
+
+# for the life event models, we ant to calculate Cohen's d for mean differences and 
+# mean differences in slopes
+if(any(grepl("le.group", rownames(fixeffs_mean)))){
+    re_sd <- (pooled_re %>% filter(term == "Intercept" & le.group == 0) %>%
+      summarise(sd = sd(b)))$sd
+    fixeff <- fixeff %>%
+      mutate(d = ifelse(grepl("le.group", term) == F, NA, estimate/re_sd))
+} 
+
+ # if (type != "bayesian"){ 
+ #    sum_mod <- tribble(
+ #      ~type, ~term, ~Estimate, 
+ #      "summary", "CFI", fitmeas_mean["cfi"],
+ #      "summary", "RMSEA", fitmeas_mean["rmsea"],
+ #      "summary", "$\\chi^2$", fitmeas_mean["chisq"],
+ #      "summary", "df", fitmeas_mean["df"]
+ #    )
+ #  } # else {
+  #   sum_mod <- tribble(
+  #     ~type, ~term, ~Estimate, 
+  #     "summary", "bic", fitmeas_mean["bic"],
+  #     "summary", "waic", fitmeas_mean["waic"],
+  #     "summary", "margloglik", fitmeas_mean["margloglik"]
+  #   )
+  # } 
+  results <- fixeff %>% full_join(raneff) #%>% full_join(sum_mod)
+  
+  # pool hypothesis tests
+  hyp_mean <- res %>% unnest(hyp) %>% 
+    group_by(term, term.type) %>%
+    summarize_all(funs(mean)) %>%
+    ungroup()
+  
+  # pool fixed efect predictions
+  fixef_pred <- res %>% unnest(fixef_pred) %>%
+    group_by(new.wave, le.group) %>%
+    summarize_all(funs(mean)) %>%
+    ungroup()
+  
+  # pool random efect predictions
+  ranef_pred <- res %>% unnest(ranef_pred) %>%
+    group_by(new.wave, le.group, PROC_SID) %>%
+    summarize_all(funs(mean)) %>%
+    ungroup()
+  
+  # pool standard errors
+  se <- res %>% unnest(se) %>%
+    group_by(parameter,term) %>%
+    summarise_all(funs(mean)) %>%
+    ungroup()
+  
+  # FINALLY RETURN THE RESULTS
+  results <- list(fixef_pred = fixef_pred, ranef_pred = ranef_pred, table = results, 
+              ranef.tab = pooled_re, vcov = vcov_mean, se = se, hypoth = hyp_mean)
+  save(results, file = sprintf("%s/results/model results/pooled/%s_%s.RData", data_path, trait, event))
+  beepr::beep(sound = 2)
+  return(TRUE)
+}
+```
+
+### brm Models
+The function below actually runs the `brms` models using the `brm()` function. Note that the model formula is different for the life event v. no life event models. Because data storage is a problem. For each iteration of the models, we'll filter out the responses we need. I don't want to store these in the already unwieldily large model data frame. Note that we use the default `brms` priors in most cases, with the exception of the variance terms. For those we use a half-cauchy distribution, which is better than a student's t because it doesn't include negative terms (and variances can't be negative.). In addition, some models had convergence issues. For these models, we'll up the number of iterations from 2000 to 8000, the warmup from 1000 iterations to 4000 iterations, the `adapt_delta` to .99 rather than .8, and the maximum treedepth from 10 to 20. We'll save each model to a .RData file that we'll load in and pool using our other functions. 
+```{r}
+growth_fun <- function(event, trait){
+  no_cores <- detectCores()-1
+  k <- ifelse(trait == "C", 10,1)
+  lapply(k:10, function(x){
+      rstan_options(auto_write = TRUE)
+      options(mc.cores = parallel::detectCores()-1)
+    print(paste(event, trait, x), sep = " ")
+    if(event == "none"){
+      subs <- unique((nested.psw %>% filter(match_set == "socialization" & chain == 1) %>%
+                        unnest(psw.df))$PROC_SID)
+      df <- bfi.imp %>% filter(chain == x & Trait == trait & PROC_SID %in% subs) %>%
+        gather(key = item, value = value, T1_1:T3_3) %>%
+        separate(item, c("wave", "item"), sep = "_") %>%
+        mutate(new.wave = as.numeric(mapvalues(wave, c("T1", "T2", "T3"), 0:2))) %>%
+        group_by(PROC_SID, new.wave, sex.c, age, age.c, age.c2, age.c3) %>%
+        summarize(value = mean(value, na.rm = T))
+      Prior <- get_prior(value ~ new.wave + (new.wave|PROC_SID), data = df)
+      Prior <- set_prior("cauchy(0,10)", class = "sd")
+      start.tmp <- Sys.time()
+      fit <- brm(value ~ new.wave + (new.wave|PROC_SID),
+                 data = df, control = list(adapt_delta = 0.99))
+      # fit <- lmer(value ~ sex.c*new.wave + age.c*new.wave + age.c2*new.wave + (new.wave|PROC_SID), data = df)
+      end.tmp <- Sys.time()
+    } else{
+      subs <- unique((nested.psw %>% 
+        filter(match_set == "socialization" & chain == 1 & Event == event) %>%
+          unnest(psw.df))$PROC_SID)
+      df <- bfi.imp %>% filter(Trait == trait & chain == x & PROC_SID %in% subs) %>%
+        gather(key = item, value = value, T1_1:T3_3) %>%
+        separate(item, c("wave", "item"), sep = "_") %>%
+        mutate(new.wave = as.numeric(mapvalues(wave, c("T1", "T2", "T3"), 0:2))) %>%
+        group_by(PROC_SID, new.wave, sex.c, age, age.c, age.c2, age.c3) %>%
+        summarize(value = mean(value, na.rm = T)) %>% 
+        left_join(le_dat %>% select(Event, PROC_SID, le.group) %>% filter(Event == event)) %>%
+        mutate(le.group = factor(le.group))
+      if((trait == "A" & event %in% c("ChldMvOut", "MoveIn", "ChldBrth")) | 
+         (trait == "E" & event %in% c("ParDied")) |
+         (trait == "C" & event %in% c("Retire")) |
+         (trait == "O" & event %in% c("Unemploy")) |
+         event %in% c("PartDied", "FrstJob", "Divorce", "LeftPar")){
+          Iter <- 8000; Warmup <- 4000; treedepth <- 20
+         } else {Iter <- 2000; Warmup <- 1000; treedepth <- 10}
+          Prior <- get_prior(value ~ new.wave*le.group + (new.wave|PROC_SID), data = df)
+          Prior <-  c(set_prior("cauchy(0,1)", class = "sd"), set_prior("cauchy(0,1)", class = "sigma"))
+      start.tmp <- Sys.time()
+      fit <- brm(value ~ new.wave*le.group + (new.wave|PROC_SID),  data = df,  prior = Prior,
+                 control = list(adapt_delta = 0.99, max_treedepth = treedepth), iter = Iter, warmup = Warmup)
+      end.tmp <- Sys.time()
+      }
+      print(end.tmp - start.tmp)
+      file <- sprintf("%s/unpooled/%s_%s_chain%s_brm_cv.RData", model_path, trait, event, x)
+      save(fit, file = file)
+      rm(fit)
+  return(T)
+  })
+}
+```
+
+
+## Run Models
+Finaly, let's run the models. Please don't actually do this unless you have months of your life or a super computer.  
+```{r run LGM, eval = F}
+load(url(sprintf("%s/results/psw_small.RData", data_path)))
+load(url(sprintf("%s/results/mi_dat_small.RData", data_path)))
+
+bfi_growth <- crossing(
+  Event = c(unique(nested.psw$Event)),#, "none"),
+  Trait = unique(bfi_wide$Trait)
+  ) %>%
+  mutate(b.grp.mod = map2(Event, Trait, growth_fun))
+```
+
+## Pool Results
+Now time to pool the results. Note that this will call the `pool_fun()` I defined above that will load in and pool all the models. This will then save the results to yet another .RData file, that we'll load in after pooling, which takes at least a week. 
+```{r, eval = F}
+bfi_growth <- crossing(
+  Event = c("none", unique(le_dat$Event)),
+  Trait = unique(bfi_wide$Trait)
+  ) %>%
+  mutate(b.grp.mod = map2(Event, Trait, pool_fun))
+save(bfi_growth, file = sprintf("%s/results/lav_growth.RData", data_path))
+```
+
+## Load Results
+The models take days to weeks to run, and pooling takes at least an additional day, so we're going to load in the results of the models, rather than the models themselves.  
+```{r, eval = F}
+model_path <- "~/Box/Models/PCLE Replication"
+files <- list.files(sprintf("%s/results/model results/pooled", data_path))
+load_fun <- function(event, trait){
+  file <- sprintf("%s/results/model results/pooled/%s_%s.RData", data_path, trait, event)
+  load(url(file))
+  return(results)
+}
+
+bfi_growth <- crossing(
+  Event = c(unique(le_dat$Event), "none"),
+  Trait = unique(bfi_wide$Trait)
+  ) %>% filter(!(Event %in% c("DadDied", "MomDied"))) %>%
+  mutate(b.grp.pool = map2(Event, Trait, load_fun),
+         b.fixef.tab = map(b.grp.pool, ~.$table),
+         b.ranef.tab = map(b.grp.pool, ~.$ranef.tab),
+         b.vcov.mat = map(b.grp.pool, ~.$vc),
+         b.se = map(b.grp.pool, ~.$se),
+         b.fixef.pred = map(b.grp.pool, ~.$fixef_pred),
+         b.ranef.pred = map(b.grp.pool, ~.$ranef_pred),
+         b.hyp = map(b.grp.pool, ~.$hypoth))
+save(bfi_growth, file = sprintf("%s/results/lav_growth.RData", data_path))
+```
+
+
+## Table Results  
+Let's create some tables. Figures are more fun, but sometimes it's nice to see different values.  
+```{r pool LGM, results='asis'}
+load(url(sprintf("%s/results/lav_growth.RData", data_path)))
+
+big5 <- tibble(
+  old = c("E", "A", "C", "N", "O"),
+  new = c("Extraversion", "Agreeableness", "Conscientiousness", "Neuroticism", "Openness"),
+  colors = c("royalblue", "orange", "lightgoldenrod", "springgreen3", "purple")
+)
+events <- tibble(
+  old = c("none", "Married", "MoveIn", "Divorce", "SepPart", "PartDied", "LeftPar", 
+          "ChldMvOut", "ChldBrth", "ParDied", "Unemploy", "Retire", "FrstJob"),
+  new = c("Mean", "Marriage", "Moved in with Partner", "Divorce", "Separation from Partner", 
+          "Death of Partner/Spouse", "Leaving Parental Home", "Child Leaves Home", 
+          "Birth of Child", "Death of Parent",   "Unemployment", "Retirement", "First Job"),
+  breaks = c("Mean", "Marriage", "Moved in\nwith Partner", "Divorce", "Separation\nfrom Partner", 
+          "Death of\nPartner/Spouse", "Leaving\nParental Home", "Child Leaves\nHome", 
+          "Birth of\nChild", "Death of\nParent",   "Unemployment", "Retirement", "First Job")
+)
+
+bfi_growth_tab <- bfi_growth %>% 
+  unnest(b.fixef.tab, .drop = T) %>%
+  filter(!grepl("age.c", term) & !grepl("sex.c", term) & term != "df") %>%
+  filter((Event == "none" & term %in% c("Intercept", "Slope")) |
+         (Event != "none" & !(term %in% c("Intercept", "Slope"))) |
+          type %in% c("summary", "raneff")) %>%
+  filter(!(Event != "none" & type == "summary")) %>%
+  mutate(sig = ifelse(!(type %in% c("summary", "raneff")) & 
+           sign(lower) == sign(upper), "sig", "ns")) %>%
+  mutate_at(vars(estimate, lower, upper, d), funs(sprintf("%.2f", .))) %>%
+  mutate(term = ifelse(term == "le.group", "Intercept",
+                ifelse(term == "Slope:le.group", "Slope", term)),
+         CI = sprintf("[%s, %s]", lower, upper)) %>%
+  mutate_at(vars(estimate, d, CI), funs(ifelse(sig == "sig", 
+            # sprintf("\\textbf{%s}", .), .))) %>% 
+            sprintf("<strong>%s</strong>", .), .))) %>% 
+  select(-lower, -upper, -std.error, -sig) 
+
+bfi_ranef <- bfi_growth_tab %>% filter(type %in% c("raneff", "summary"))
+
+bfi_growth_tab <- bfi_growth_tab %>%
+  filter(type == "fixeff") %>%
+  # mutate(b = sprintf("\\makecell{%s \\\\ {%s}}", estimate, CI)) %>%
+  mutate(b = sprintf("%s<br>%s", estimate, CI)) %>%
+  gather(key = est, value = value, b, d) %>%
+  select(-CI, -estimate) %>%
+  unite(comb, Trait, est, sep = ".") %>%
+  mutate(comb = factor(comb, levels = paste(rep(big5$old, each=2), 
+                          rep(c("b", "d"), times = 5), sep="."))) %>%
+  spread(key = comb, value = value) %>%
+  mutate(Event = factor(Event, events$old)) %>%
+  arrange(type, term, Event) %>%
+  select(type, term, everything(), -chain) 
+```
+
+### Intercepts  
+The table below shows the intercepts of those who did or didn't experience events, along with the highest posterior density interval of that intercept and the standardized mean difference between groups in 2005.  
+```{r}
+ints <- bfi_growth %>% unnest(b.fixef.tab) %>% filter((Event != "none" & term == "le.group") | (Event == "none" & term == "Intercept"))
+ints %>% 
+  mutate(sig = ifelse(sign(lower) == sign(upper), "sig", "ns")) %>%
+  select(Event:Trait, d, sig) %>%
+  left_join(bfi_growth %>% unnest(b.hyp) %>% filter(term.type == "Intercept")) %>%
+  mutate(CI = sprintf("[%.2f, %.2f]", lower, upper)) %>%
+  mutate_at(vars(b, d), funs(ifelse(is.na(.) == F, sprintf("%.2f", .), .))) %>%
+  mutate_at(vars(d), funs(ifelse(sig == "sig" & Event != "none", 
+              # sprintf("\\textbf{%s}", .), .))) %>%
+              sprintf("<strong>%s</strong>", .), .))) %>%
+  mutate(d = ifelse(term == "No Event", "", d)) %>%
+  # mutate(b = sprintf("\\makecell{%s \\\\ {%s}}", b, CI)) %>%
+  select(Event, Trait, term, b, CI, d) %>%
+  gather(key = b, value = value, b, CI, d) %>%
+  unite(tmp, Trait, b, sep = ".") %>%
+  spread(key = tmp, value = value) %>%
+  mutate(Event = mapvalues(Event, events$old, events$new),
+         Event = factor(Event, levels = events$new)) %>%
+  arrange(Event) %>%
+  select(-Event) %>%
+  kable(., "html", booktabs = T, digits = 2, escape = F,
+        col.names = c("", rep(c("b", "HPDI", "d"), times = 5)),
+        # caption = "Effects of Specific Events on the mean-level (Intercept) of Personality Based on Multilevel Growth Models",
+        align = c("l", rep("c", 15))) %>%
+  kable_styling(full_width = F, font_size = 10) %>%
+  # column_spec(seq(2,10,2), width = "1.2cm") %>%
+  # column_spec(seq(3,11,2), width = ".8cm") %>%
+  add_header_above(c(" " = 1, "A" = 3, "C" = 3, "E" = 3, "N" = 3, "O" = 3)) %>%
+  group_rows("Mean", 1, 1) %>%
+  group_rows("Marriage", 2, 3) %>%
+  group_rows("Moved in with Partner", 4, 5) %>%
+  group_rows("Divorce", 6, 7) %>%
+  group_rows("Separation from Partner", 8, 9) %>%
+  group_rows("Death of spouse", 10, 11) %>%
+  group_rows("Leaving Parental Home", 12, 13) %>%
+  group_rows("Child Leaves Home", 14, 15) %>%
+  group_rows("Birth of Child", 16, 17) %>%
+  group_rows("Death of Parent", 18, 19) %>%
+  group_rows("Unemployment", 20, 21) %>%
+  group_rows("Retirement", 22, 23) %>%
+  group_rows("First Job", 24, 25) %>%
+  footnote(general = "Cohen's d is calculated by dividing the difference in mean personality between groups in 2005 by the standard deviation of the random intercepts of personality scores in 2005 of the control group. HPDI = highest posterior density interval.  Bolded values represent estimated mean differences between groups whose 95% HPDI's do not overlap with 0.") 
+```
+
+
+### Group Differences in Intercepts
+The table below shows the differnces in intercepts between the group. Note that the matching procedure should have (and did) eliminate almost all of these.  
+```{r, results = 'asis'}
+bfi_growth_tab %>% 
+  filter(term == "Intercept" & Event != "none") %>%
+  select(-type, -term) %>%
+  mutate(Event = mapvalues(Event, events$old, events$new),
+         Event = factor(Event, levels = events$new)) %>%
+  arrange(Event) %>%
+  select(-Event) %>%
+  kable(., "html", escape = F, digits = 2, booktabs = T,
+        col.names = c(rep(c("b [HPDI]", "d"), times = 5)),
+        align = c(rep("c", 10)),
+        caption = "Effects of Specific Events on the Mean-Level Personality Based on Multilevel Growth Models") %>%
+  kable_styling(full_width = F, font_size = 10) %>%
+  # column_spec(1, width = "4cm") %>%
+  group_rows("Marriage", 1, 1) %>%
+  group_rows("Moved in with Partner", 2,2) %>%
+  group_rows("Divorce", 3,3) %>%
+  group_rows("Separation from Partner", 4,4) %>%
+  group_rows("Death of spouse", 5,5) %>%
+  group_rows("Leaving Parental Home", 6,6) %>%
+  group_rows("Child Leaves Home", 7,7) %>%
+  group_rows("Birth of Child", 8,8) %>%
+  group_rows("Death of Parent", 9,9) %>%
+  group_rows("Unemployment", 10,10) %>%
+  group_rows("Retirement", 11,11) %>%
+  group_rows("First Job", 12,12) %>%
+  add_header_above(c("A" = 2, "C" = 2, "E" = 2, "N" = 2, "O" = 2)) %>%
+  footnote(general = "Cohen's d is calculated by dividing the difference in mean slope between groups by the standard deviation of the random intercepts of personality scores in 2005 of the control group. HPDI = highest posterior density interval.  Bolded values represent estimated mean differences in change between groups whose 95% HPDI's do not overlap with 0.") 
+```
+
+### Slopes
+```{r, results='asis'}
+sig <- bfi_growth %>% unnest(b.fixef.tab) %>%
+  filter(!(Event %in% c("MomDied", "DadDied"))) %>%
+  filter(term == "Slope:le.group") %>%
+  group_by(Event, Trait) %>%
+  summarize(sig = ifelse(sign(lower) == sign(upper), "sig", "ns")) %>%
+  ungroup()
+
+d <- bfi_growth %>% unnest(b.fixef.tab) %>% filter(term == "Slope:le.group") %>% select(Event, Trait, d)
+
+soc.tab <- bfi_growth %>% 
+  filter(!(Event %in% c("MomDied", "DadDied"))) %>%
+  unnest(b.hyp, .drop = T) %>% 
+  full_join(sig) %>%
+  full_join(d) %>%
+  filter(term.type == "Slope") %>%
+  mutate(term2 = as.numeric(mapvalues(term, unique(term), c(1,0))),
+            sig = ifelse(is.na(sig) == T, "ns", sig),
+         # Trait = mapvalues(Trait, big5$old, big5$new),
+        Trait = factor(Trait, levels = big5$old),
+        Event = mapvalues(Event, events$old, events$breaks),
+        Event = factor(Event, levels = events$breaks)) %>%
+  arrange(Event)
+
+soc.tab %>%
+  mutate(sig = ifelse(is.na(sig) == T, "ns", sig),
+         CI = sprintf("[%.2f, %.2f]", lower, upper)) %>%
+  mutate_at(vars(b,d), funs(sprintf("%.2f", .))) %>%
+  mutate_at(vars(d), funs(ifelse(sig == "sig", #sprintf("\\textbf{%s}", .), .))) %>%
+            sprintf("<strong>%s</strong>", .), .))) %>%
+  mutate(d = ifelse(d == "NA", "", d),
+         d = ifelse(term == "No Event", "", d)) %>%
+  select(Event, Trait, term, b, CI, d) %>%
+  gather(key = est, value = value, b, CI, d) %>%
+  unite(tmp, Trait, est, sep = ".") %>%
+  spread(key = tmp, value = value) %>%
+  mutate(Event = factor(Event, levels = events$breaks)) %>%
+  arrange(Event) %>%
+  select(-Event) %>%
+  kable(., "html", escape = F, digits = 2, booktabs = T,
+        col.names = c("", rep(c("b", "HPDI", "d"), times = 5)),
+        align = c("l", rep("c", 15)),
+        caption = "Effects of Specific Events on the Mean-Level Change (Slope) of Personality Based on Multilevel Growth Models") %>%
+  kable_styling(full_width = F, font_size = 10) %>%
+  # column_spec(1, width = "4cm") %>%
+  add_header_above(c(" " = 1, "A" = 3, "C" = 3, "E" = 3, "N" = 3, "O" = 3)) %>%
+  group_rows("Mean", 1, 1) %>%
+  group_rows("Marriage", 2, 3) %>%
+  group_rows("Moved in with Partner", 4, 5) %>%
+  group_rows("Divorce", 6, 7) %>%
+  group_rows("Separation from Partner", 8, 9) %>%
+  group_rows("Death of spouse", 10, 11) %>%
+  group_rows("Leaving Parental Home", 12, 13) %>%
+  group_rows("Child Leaves Home", 14, 15) %>%
+  group_rows("Birth of Child", 16, 17) %>%
+  group_rows("Death of Parent", 18, 19) %>%
+  group_rows("Unemployment", 20, 21) %>%
+  group_rows("Retirement", 22, 23) %>%
+  group_rows("First Job", 24, 25) %>%
+  footnote(general = "Cohen's d is calculated by dividing the difference in mean slope between groups by the standard deviation of the random intercepts of personality scores in 2005 of the control group. HPDI = highest posterior density interval.  Bolded values represent estimated mean differences in change between groups whose 95% HPDI's do not overlap with 0.") #%>%
+  # landscape()
+```
+
+### Group Differences in Slopes
+The table below shows the differnces in slopes between the groups. These are basically are critical "significance" tests of the cross level interaction between wave and life event groups.   
+```{r, results = 'asis'}
+bfi_growth_tab %>% 
+  filter(term == "Slope" & Event != "none") %>%
+  select(-type, -term) %>%
+  mutate(Event = mapvalues(Event, events$old, events$new),
+         Event = factor(Event, levels = events$new)) %>%
+  arrange(Event) %>%
+  select(-Event) %>%
+  kable(., "html", escape = F, digits = 2, booktabs = T,
+        col.names = c(rep(c("b [HPDI]", "d"), times = 5)),
+        align = c(rep("c", 10)),
+        caption = "Effects of Specific Events on the Mean-Level Change (Slope) of Personality Based on Multilevel Growth Models") %>%
+  kable_styling(full_width = F, font_size = 10) %>%
+  # column_spec(1, width = "4cm") %>%
+  group_rows("Marriage", 1, 1) %>%
+  group_rows("Moved in with Partner", 2,2) %>%
+  group_rows("Divorce", 3,3) %>%
+  group_rows("Separation from Partner", 4,4) %>%
+  group_rows("Death of spouse", 5,5) %>%
+  group_rows("Leaving Parental Home", 6,6) %>%
+  group_rows("Child Leaves Home", 7,7) %>%
+  group_rows("Birth of Child", 8,8) %>%
+  group_rows("Death of Parent", 9,9) %>%
+  group_rows("Unemployment", 10,10) %>%
+  group_rows("Retirement", 11,11) %>%
+  group_rows("First Job", 12,12) %>%
+  add_header_above(c( "A" = 2, "C" = 2, "E" = 2, "N" = 2, "O" = 2)) %>%
+  footnote(general = "Cohen's d is calculated by dividing the difference in mean slope between groups by the standard deviation of the random intercepts of personality scores in 2005 of the control group. HPDI = highest posterior density interval.  Bolded values represent estimated mean differences in change between groups whose 95% HPDI's do not overlap with 0.") 
+```
+
+### Variances  
+Were there individual differences in slopes and intercepts? How much of the variance do our models explain. Below, you see a very large table of the level 1 and 2 variances as well as teh correlations among level 2 variances.  
+```{r, results='asis'}
+bfi_ranef %>% 
+  filter(type == "raneff") %>%
+  rename(Mean = estimate, HPDI = CI) %>%
+  gather(key = estimate, value = value, Mean, HPDI) %>%
+  unite(comb, Trait, estimate, sep = ".") %>%
+  mutate(comb = factor(comb, levels = paste(rep(big5$old, each=2), 
+                          rep(c("Mean", "HPDI"), times = 5), sep="."))) %>%
+  spread(key = comb, value = value) %>%
+  mutate(Event = mapvalues(Event, events$old, events$new),
+         Event = factor(Event, levels = events$new)) %>%
+  arrange(Event) %>%
+  select(-Event, -d, -type, -chain) %>%
+  kable(., "html", escape = F, digits = 2, booktabs = T,
+        col.names = c(" ", rep(c("b [HPDI]", "d"), times = 5)),
+        align = c("l", rep("c", 10)),
+        caption = "Effects of Specific Events on the Mean-Level Personality Based on Multilevel Growth Models") %>%
+  kable_styling(full_width = F, font_size = 10) %>%
+  # column_spec(1, width = "4cm") %>%
+  group_rows("Mean", 1, 4) %>%
+  group_rows("Marriage", 5, 8) %>%
+  group_rows("Moved in with Partner",9, 12) %>%
+  group_rows("Divorce", 13, 16) %>%
+  group_rows("Separation from Partner", 17, 20) %>%
+  group_rows("Death of spouse", 21, 24) %>%
+  group_rows("Leaving Parental Home", 25, 28) %>%
+  group_rows("Child Leaves Home", 29, 32) %>%
+  group_rows("Birth of Child", 33, 36) %>%
+  group_rows("Death of Parent", 37, 40) %>%
+  group_rows("Unemployment", 41, 44) %>%
+  group_rows("Retirement", 45, 48) %>%
+  group_rows("First Job", 49, 52) %>%
+  add_header_above(c(" " = 1, "A" = 2, "C" = 2, "E" = 2, "N" = 2, "O" = 2)) 
+```
+
+
+## Extract Samples 
+It's no fun to do Bayesian models without extracting the samples. We'll use these to look at trace plots and posterior distributions of our models terms. Note that the reason we do this is because we only want to keep samples for some of the parameters. We have several thousand samples for several thousand parameters because the parameters also include individual level effects.  
+```{r, eval = F}
+sample_fun <- function(event, trait){
+  load(url(sprintf("%s/unpooled/%s_%s_chain1_brm_cv.RData", model_path, trait, event)))
+  post <- posterior_samples(fit, add_chain = T, pars = c("b_Intercept", "b_new.wave", "b_le.group", 
+        "cor_PROC_SID__Intercept__new.wave", "sd_PROC_SID__Intercept", "sd_PROC_SID__new.wave", "sigma")) %>% 
+    tbl_df %>% 
+    setNames(c("Intercept", "Slope", "Event Group", "Slope x Event Group", "Level 2 Intercept SD",
+             "Level 2 Slope SD", "Level 2 Intercept-Slope r", "Sigma", "Chain", "Iter")) %>%
+    gather(key = term, value = estimate, Intercept:Sigma)
+  # save(post, file = sprintf("%s/results/samples/%s_%s.RData", data_path, trait, event))
+  return(post)
+}
+
+bfi_growth <- crossing(
+  Event = c(unique(le_dat$Event)),#, "none"),
+  Trait = unique(bfi_wide$Trait)
+  ) %>% 
+  mutate(samples = map2(Event, Trait, sample_fun))
+```
+
+The samples take awhile to extract because we have to load in all the models. So instead, we'll just load in the samples. 
+```{r, eval = F}
+load_fun <- function(event, trait)  {
+  load(url(sprintf("%s/results/samples/%s_%s.RData", data_path, trait, event)))
+  return(post)
+}
+
+bfi_growth <- bfi_growth %>% 
+  mutate(samples = map2(Event, Trait, load_fun))
+
+growth_samples <- bfi_growth %>% unnest(samples) %>% tbl_df
+
+save(growth_samples, file = sprintf("%s/results/growth_samples.RData", data_path))
+```
+
+##Plot Results
+
+### Sample Posterior Distributions
+First, let's plot the posterior distributions. I don't really want to do this for 70 models separately, so I'll just show you a sample. You can look at my web app if you want to see all models. 
+```{r}
+load(url(sprintf("%s/results/growth_samples.RData", data_path)))
+
+levs <- c("Intercept", "Slope", "Event Group", "Slope x Event Group", "Level 2 Intercept SD",
+             "Level 2 Slope SD", "Level 2 Intercept-Slope r", "Sigma")
+
+growth_samples %>% filter(Trait == "A" & Event == "Married") %>% 
+  mutate(term = factor(term, levels = levs)) %>%
+  ggplot(aes(y = term, x = estimate, fill = term)) + 
+  geom_halfeyeh() + 
+  facet_wrap(~term, scales = "free", ncol = 2, strip.position = "right") + 
+  labs(x = "Parameter Estimate", y = NULL, title = "Agreeableness: Marriage") +
+  theme_classic() + 
+  theme(strip.text = element_blank(),
+        legend.position = "none",
+        axis.text = element_text(face = "bold", size = rel(1.2)),
+        axis.title = element_text(face = "bold", size = rel(1.2)),
+        plot.title = element_text(face = "bold", size = rel(1.2), hjust = .4))
+# ggsave(sprintf("%s/results/plots/A_marriage_posterior_soc.png", data_path), width = 14, height = 8)
+```
+
+
+### Sample Trace Plot
+Let's also look at a trace plot. This is a trace plot of Markov chain from one multiply imputed Bayseian multilevel growth model. In this sample, the examined trait was Extraversion, and the life event was the a moving out of one's parents' home. This is a healthy Markov chain that exhibits both stationarity and well-mixing. The iterations represent only post-warmup samples.  
+```{r, eval = F}
+load(url("~/Box/Models/PCLE Replication/unpooled/E_LeftPar_chain1_brm_cv.RData"))
+post <- posterior_samples(fit, add_chain = T)
+post.small <- post %>% select(-contains(",Intercept"), -contains(",new.wave")) %>% tbl_df
+post.small <- post.small %>% select(-iter, -`lp__`, -contains("sex"), -contains("age"), -contains("cor")) %>% 
+  setNames(c("Intercept", "Slope", "Event Group", "Slope x Event Group", "Level 2 Intercept SD",
+             "Level 2 Slope SD", "Sigma", "Chain"))
+
+save(post.small, file = sprintf("%s/results/diagnostics.RData", data_path))
+```
+
+```{r}
+load(url(sprintf("%s/results/diagnostics.RData", data_path)))
+library(bayesplot)
+mcmc_trace(post.small,
+           size = .25) +
+  theme_classic() +
+  theme(legend.position = c(.5, .15),
+        legend.direction = "horizontal") +
+    theme(axis.text = element_text(face = "bold"),
+          axis.title = element_text(face = "bold", size = rel(1.2)),
+          legend.text = element_text(face = "bold"),
+          legend.title = element_text(face = "bold", size = rel(1.2)),
+          strip.text = element_text(face = "bold", size = rel(.8)),
+          plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
+```
+
+### Mean Level Trajectories {.tabset}
+Next, we'll check out mean level trajectories. If the groups are different, we should see differences in change. If not, the trajectories will overlap. I plot these with a 95\% interval around them. 
+```{r ML traj}
+big5 <- tibble(
+  old = c("E", "A", "C", "N", "O"),
+  new = c("Extraversion", "Agreeableness", "Conscientiousness", "Neuroticism", "Openness"),
+  colors = c("royalblue", "orange", "lightgoldenrod", "springgreen3", "purple")
+)
+events <- tibble(
+  old = c("none", "Married", "MoveIn", "Divorce", "SepPart", "PartDied", "LeftPar", 
+          "ChldMvOut", "ChldBrth", "ParDied", "Unemploy", "Retire", "FrstJob"),
+  new = c("Mean", "Marriage", "Moved in with Partner", "Divorce", "Separation from Partner", 
+          "Death of Partner/Spouse", "Leaving Parental Home", "Child Leaves Home", 
+          "Birth of Child", "Death of Parent",   "Unemployment", "Retirement", "First Job"),
+  breaks = c("Mean", "Marriage", "Moved in\nwith Partner", "Divorce", "Separation\nfrom Partner", 
+          "Death of\nPartner/Spouse", "Leaving\nParental Home", "Child Leaves\nHome", 
+          "Birth of\nChild", "Death of\nParent",   "Unemployment", "Retirement", "First Job")
+)
+
+# unnest and refactor fixed effect predictions
+growth_pred <- bfi_growth %>%
+  unnest(b.fixef.pred, .drop = T) %>%
+  filter(!(Event %in% c("DadDied", "MomDied", "none"))) %>%
+  mutate(le_value = mapvalues(le.group, unique(le.group), c("No Event", "Event")),
+         shrt_Event = Event, shrt_Trait = Trait,
+         Event = mapvalues(Event, events$old, events$breaks),
+         Event = factor(Event, levels = events$breaks),
+         Trait = mapvalues(Trait, big5$old, big5$new),
+         Trait = factor(Trait, levels = big5$new))
+
+# get "significance"
+sig <- bfi_growth %>% 
+  unnest(b.fixef.tab) %>% 
+  filter(!(Event %in% c("DadDied", "MomDied", "none"))) %>%
+  filter(term == "Slope:le.group") %>% 
+  mutate(sig = ifelse(sign(lower) == sign(upper), "sig", "ns")) %>% 
+  select(Event, Trait, sig, d)
+
+# create a data frame that will help control faceted axes
+range_act <- growth_pred %>%
+  group_by(Trait, Event, shrt_Event, shrt_Trait) %>%
+  summarize(min = min(Estimate) - .5, max = max(Estimate) + .5) %>%
+  gather(key = est, value = Estimate, min, max) %>%
+  full_join(crossing(new.wave = 1:3, shrt_Trait = c("E", "A", "C", "N", "O"))) %>%
+  full_join(sig %>% select(Event, Trait, sig) %>% 
+    rename(shrt_Trait = Trait, shrt_Event = Event)) %>%
+  select(-est) %>% 
+  unite(comb, Trait, Event, sep = ".", remove = F) 
+
+# save for later use in the app
+# save(growth_pred, range_act, file = sprintf("%s/results/growth_pred.RData", data_path))
+
+traj_fun <- function(trait){
+  color <- (big5 %>% filter(new == trait))$colors
+  # base of plot
+  p <- growth_pred %>% filter(Trait == trait) %>%
+  ggplot(aes(x = new.wave + 1, y = Estimate)) +
+    scale_x_continuous(limits = c(1,3), breaks = seq(1,3,1)) +
+    scale_color_manual(values = c(color, "black"))
+  # background highlights
+  if(any((range_act %>% filter(Trait == trait))$sig == "sig")){
+    p <- p +
+    geom_rect(data = range_act %>% filter(Trait == trait & sig == "sig"), fill = "khaki1", 
+              alpha = .5, aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf)) 
+  } 
+  # the rest of the plot
+  p<- p + 
+    geom_ribbon(aes(ymin = `2.5%ile`, ymax = `97.5%ile`, group = le_value), fill = "lightblue", alpha = .25) +
+    geom_line(aes(color = factor(le_value), linetype = factor(le_value)), size = .5) +
+    geom_blank(data = range_act %>% filter(Trait == trait)) +
+    labs(x = "Wave", y = "Predicted Personality Rating",
+         color = "Life Event", title = trait, linetype = "Life Event") +
+    facet_wrap(~ Event, nrow = 3) +
+    theme_classic() +
+    theme(axis.text = element_text(face = "bold"),
+          axis.title = element_text(face = "bold", size = rel(1.2)),
+          legend.position = "bottom",
+          legend.text = element_text(face = "bold"),
+          legend.title = element_text(face = "bold", size = rel(1.2)),
+          strip.text = element_text(face = "bold", size = rel(.7)),
+          plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
+  # ggsave(sprintf("%s/results/plots/%s_trajectories.png", data_path, trait), width = 6, height = 5)
+  p
+}
+
+# refactor sig df
+pl.sig <- sig %>%
+  mutate(shrt_Event = Event, shrt_Trait = Trait,
+         Event = mapvalues(Event, events$old, events$breaks),
+         Event = factor(Event, levels = events$breaks),
+         Trait = mapvalues(Trait, big5$old, big5$new),
+         Trait = factor(Trait, levels = big5$new)) %>% 
+  unite(comb, Trait, Event, sep = ".", remove = F) %>% 
+  filter(sig == "sig") 
+```
+
+#### Sample Plots
+Here's one sample plot that I use in my talk to get people oriented to the graphs. 
+```{r}
+# plot sample trajectory for Agreeabelness + Marriage
+growth_pred %>% 
+  filter(shrt_Trait == "A" & shrt_Event == "Married") %>%
+  ggplot(aes(x = new.wave + 1, y = Estimate)) +
+    scale_x_continuous(limits = c(1,3), breaks = seq(1,3,1)) +
+    scale_color_manual(values = c("royalblue", "black")) +
+    geom_ribbon(aes(ymin = `2.5%ile`, ymax = `97.5%ile`, group = le_value), fill = "lightblue", alpha = .25) +
+    geom_line(aes(linetype = factor(le_value)), size = .5) +
+    geom_blank(data = range_act %>% filter(shrt_Event == "Married") ) +
+    labs(x = "Wave", y = "Predicted Personality Rating",
+         color = "Life Event", linetype = "Life Event", title = "Agreeableness") +
+    facet_wrap(~  Event) +
+    theme_classic() +
+    theme(axis.text = element_text(face = "bold"),
+          axis.title = element_text(face = "bold", size = rel(1.2)),
+          legend.position = c(.75,.25),
+          legend.text = element_text(face = "bold"),
+          legend.title = element_text(face = "bold", size = rel(1.2)),
+          strip.text = element_text(face = "bold", size = rel(1.2)),
+          plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
+# # ggsave(sprintf("%s/results/plots/A_Marriage_traj.png",data_path), width = 4, height = 4)
+
+
+# plot only the "significant" trajectories
+growth_pred %>% unite(comb, Trait, Event, sep = ".", remove = F) %>%
+  filter(comb %in% pl.sig$comb) %>%
+  mutate(Trait = factor(Trait, levels = as.character(unique(pl.sig$Trait))), 
+         Event = factor(Event, levels = as.character(unique(pl.sig$Event)))) %>%
+  ggplot(aes(x = new.wave + 1, y = Estimate)) +
+    scale_x_continuous(limits = c(1,3), breaks = seq(1,3,1)) +
+    scale_color_manual(values = c("royalblue", "black")) +
+    geom_ribbon(aes(ymin = `2.5%ile`, ymax = `97.5%ile`, group = le_value), fill = "lightblue", alpha = .25) +
+    geom_line(aes(linetype = factor(le_value)), size = .5) +
+    geom_blank(data = range_act %>% filter(comb %in% pl.sig$comb) ) +
+    labs(x = "Wave", y = "Predicted Personality Rating",
+         color = "Life Event", linetype = "Life Event") +
+    facet_wrap(~ Trait + Event) +
+    theme_classic() +
+    theme(axis.text = element_text(face = "bold"),
+          axis.title = element_text(face = "bold", size = rel(1.2)),
+          legend.position = "bottom",
+          legend.text = element_text(face = "bold"),
+          legend.title = element_text(face = "bold", size = rel(1.2)),
+          strip.text = element_text(face = "bold", size = rel(.8)),
+          plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
+# ggsave(sprintf("%s/results/plots/sig_traj.png",data_path), width = 6, height = 5)
+```
+
+```{r all ML traj, results = 'asis', fig.width = 4, fig.height = 4}
+for (x in big5$new){
+  cat('\n\n  ####', x, '\n\n  ')
+  traj_fun(x)
+}
+```
+
+### Individual Level Trajectories {.tabset}  
+Often, we are also interested in individual differences, so we can look at spaghetti plots of the predicted trajectories for each person for each trait x combination.  
+```{r ind traj fun}
+ind_plots <- bfi_growth %>% 
+  unnest(b.ranef.pred) %>%
+  filter(!(Event %in% c("DadDied", "MomDied", "none"))) %>%
+  mutate(le.group = as.numeric(as.character(le.group)),
+    le.group = mapvalues(le.group, unique(le.group), c("No Event", "Event")),
+    Trait = mapvalues(Trait, big5$old, big5$new),
+    Trait = factor(Trait, levels = big5$new),
+    Event = mapvalues(Event, events$old, events$breaks),
+    Event = factor(Event, levels = events$breaks))
+
+ind_plot_fun <- function(trait){
+  sample_fun <- function(df){
+  subs1 <- sample(unique((df %>% filter(le.group == "No Event"))$PROC_SID), 50)
+  subs2 <- sample(unique((df %>% filter(le.group == "Event"))$PROC_SID), 50)
+  df <- df %>% filter(PROC_SID %in% c(subs1, subs2)) 
+  }
+  color <- (big5 %>% filter(new == trait))$colors
+  df <- ind_plots %>% filter(Trait == trait) %>%
+    group_by(Event) %>% nest() %>%
+    mutate(data = map(data, sample_fun)) %>%
+    unnest(data) %>% 
+    full_join(range_act %>% select(Trait, Event, sig) %>% filter(Trait == trait))
+  p <- df %>% ggplot(aes(x = new.wave+1, y = Estimate, color = le.group)) +
+    scale_x_continuous(limits = c(1,3), breaks = seq(1,3,1)) +
+    scale_y_continuous(limits = c(1,7), breaks = seq(1,7,3)) +
+    scale_color_manual(values = c(color, "gray80")) 
+  if(any((range_act %>% filter(Trait == trait))$sig == "sig")){
+    p <- p +
+    geom_rect(data = . %>% filter(sig == "sig"), fill = "khaki1", alpha = .5,
+    aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf), color = "khaki1") 
+  } 
+  p<- p + 
+    geom_line(aes(group = PROC_SID), size = .25) +
+    facet_wrap(~ Event, nrow = 3) +
+    labs(x = "Wave", y = "Predicted Personality Rating",
+         color = "Life Event", title = trait) +
+    theme_classic() +
+    theme(axis.text = element_text(face = "bold"),
+          strip.text = element_text(face = "bold", size = rel(.7)),
+          axis.title = element_text(face = "bold", size = rel(1.2)),
+          legend.position = "bottom",
+          legend.text = element_text(face = "bold"),
+          legend.title = element_text(face = "bold", size = rel(1.2)),
+          plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
+   # ggsave(sprintf("%s/results/plots/%s_ranef_trajectories.png", data_path, trait), width = 6, height = 5)
+   p
+}
+```
+
+#### Sample Plot  
+Here's a sample plot I use in my talk to demonstrate how to understand it. 
+```{r}
+# color <- (big5 %>% filter(new == "Agreeableness"))$colors
+  ind_plots %>% filter(Trait == "Agreeableness" & Event == "Marriage") %>%
+  ggplot(aes(x = new.wave+1, y = Estimate, color = le.group)) +
+    scale_x_continuous(limits = c(1,3), breaks = seq(1,3,1)) +
+    scale_color_manual(values = c("royalblue", "gray")) +
+    geom_line(aes(group = PROC_SID), size = .4, alpha = .4) +
+    geom_line(data = growth_pred %>% filter(Trait == "Agreeableness" & Event == "None"),
+              aes(group = le.group), color = "royalblue", size = 2)+
+    facet_wrap(~ Event, nrow = 2) +
+    labs(x = "Wave", y = "Predicted Personality Rating",
+         color = "Health Event", title = "Agreeableness") +
+    theme_classic() +
+    theme(axis.text = element_text(face = "bold"),
+          strip.text = element_text(face = "bold", size = rel(1.2)),
+          axis.title = element_text(face = "bold", size = rel(1.2)),
+          legend.position = "none",
+          legend.text = element_text(face = "bold"),
+          legend.title = element_text(face = "bold", size = rel(1.2)),
+          plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
+  # ggsave(sprintf("%s/results/plots/Agreeableness_Marriage.png", data_path), width = 4, height = 4)
+```
+
+```{r run ind traj, results = 'asis', fig.width = 6, fig.height = 5}
+for (x in big5$new){
+  cat('\n\n  ####', x, '\n\n  ')
+  ind_plot_fun(x)
+}
+```
+
+### Group Slopes {.tabset}  
+This is a fun one. For these plots, we'll plot the estimated slope for each group, the 95\% HPDI around that estimate, and the distribution of random slopes around that estimate. "Significant" differences will be flagged with color while the rest will be sad and gray. This code is unwieldy, but the result is pretty. 
+```{r slopes fun}
+slopes <- bfi_growth %>% 
+  unnest(b.hyp) %>% filter(term.type == "Slope") %>%
+  full_join(sig) %>%
+  full_join(bfi_growth %>% unnest(b.fixef.tab) %>% filter(term == "Slope:le.group") %>%
+              select(Event, Trait, d)) %>%
+  filter(!(Event %in% c("DadDied", "MomDied", "none"))) %>%
+  mutate(shrt_Event = Event, shrt_Trait = Trait,
+         Trait = mapvalues(Trait, big5$old, big5$new),
+        Trait = factor(Trait, levels = big5$new),
+        Event = mapvalues(Event, events$old, events$breaks),
+        Event = factor(Event, levels = events$breaks),
+        sig = ifelse(is.na(sig) == T, "sig", sig),
+        term2 = as.numeric(mapvalues(term, unique(term), c(1,0))))
+
+ranef_slopes <- bfi_growth %>% unnest(b.ranef.tab) %>%
+  filter(term != "Intercept") %>% 
+  mutate(term = ifelse(term == "new.wave", "Slope", term)) %>%
+  select(Event:Trait, PROC_SID, estimate) %>%
+  filter(!(Event %in% c("DadDied", "MomDied"))) %>%
+  # mutate(PROC_SID = as.numeric(PROC_SID)) %>%
+  left_join(le_dat %>% select(Event, PROC_SID, le.group)) %>%
+  full_join(sig) %>%
+  dplyr::rename(term = le.group) %>%
+  mutate(term = mapvalues(term, c(0,1), c("No Event", "Event"))) %>%
+  mutate(shrt_Event = Event, shrt_Trait = Trait,
+         Trait = mapvalues(Trait, big5$old, big5$new),
+        Trait = factor(Trait, levels = big5$new),
+        Event = mapvalues(Event, events$old, events$breaks),
+        Event = factor(Event, levels = events$breaks))  %>%
+  left_join(slopes %>% select(Event, Trait, term, b)) %>%
+  mutate(b = b + estimate) %>%
+  select(Event, shrt_Event, Trait, shrt_Trait, b, PROC_SID, term, sig) %>%
+  filter(Event != "Mean") %>%
+  mutate(term2 = as.numeric(mapvalues(term, unique(term), c(1,0))))
+
+rects <- expand.grid(
+  term = c("Event", "No Event"),
+  xstart = 0.5, 
+  xend = 1.5, 
+  b = NA_real_,
+  Event = unique(ranef_slopes$shrt_Event), 
+  Estimate = 1, stringsAsFactors = F) %>% tbl_df %>%
+  full_join(sig) %>%
+  mutate(term2 = as.numeric(mapvalues(term, unique(term), c(1,0))),
+         shrt_Event = Event, shrt_Trait = Trait,
+         Trait = mapvalues(Trait, big5$old, big5$new),
+        Trait = factor(Trait, levels = big5$new),
+        Event = mapvalues(Event, events$old, events$breaks),
+        Event = factor(Event, levels = events$breaks))
+
+# save(pl.sig, growth_pred, range_act, slopes, ranef_slopes, rects,
+#      file = sprintf("%s/results/plot_files.RData", data_path))
+
+slope_plot_fun <- function(trait){
+  color = "gray"
+  p <- slopes %>% filter(Trait == trait) %>% filter(!is.na(Event)) %>%
+  ggplot(aes(x = term2, y = b)) +
+    scale_y_continuous(limits = c(-.3,.3), breaks = seq(-.3,3,.3)) +
+    geom_violin(data = ranef_slopes %>% filter(Trait == trait & sig == "ns" & term == "No Event"),
+                aes(x = 0), color = NA, fill = color, alpha = .3) +
+    geom_violin(data = ranef_slopes %>% filter(Trait == trait & sig == "ns" & term == "Event"),
+                aes(x = 1), color = NA, fill = color, alpha = .3) +
+    scale_shape_manual(values = c(15, 17)) +
+    geom_errorbar(data = . %>% filter(sig == "ns"), aes(ymin = lower, ymax = upper), width = .1) +
+    geom_point(data = slopes %>% filter(Trait == trait & sig == "ns" ),
+               aes(shape = term), color = color, size = 2) + #shape = 15, 
+    geom_point(data = slopes %>% filter(Trait == trait & sig == "ns" & term == "No Event"),
+               aes(shape = term), color = "black", size = 2, shape = 2) +
+    geom_point(data = slopes %>% filter(Trait == trait & sig == "ns" & term == "Event"),
+               aes(shape = term), color = "black", size = 2, shape = 0) +
+    geom_label(data = slopes %>% filter(Trait == trait & sig == "ns"),
+               aes(y = -.27, label = ifelse(abs(b) < .001, round(b, 4), 
+               ifelse(abs(b) < .01, round(b,3), round(b,2)))), 
+               fill = color, color = "black", size = 3) +
+    geom_label(data = slopes %>% filter(Trait == trait & sig == "ns" & term == "Event"),
+               aes(y = .27, label = paste("d =", ifelse(abs(d) < .001, round(d, 4), 
+               ifelse(abs(d) < .01, round(d,3), round(d,2))), sep = " ")), 
+               fill = color, color = "black", size = 3, nudge_x = -.5) +
+    labs(x = NULL, y = "Estimate", title = trait, shape = NULL) +
+    facet_wrap(~Event, nrow = 2) +
+    theme_classic() +
+    theme(legend.position = "bottom",
+          axis.text = element_text(face = "bold", size = rel(1.2)),
+          axis.text.x = element_blank(),#element_text(face = "bold", size = rel(1.2), angle = 45, hjust = 1),
+          axis.ticks.x = element_blank(),
+          axis.title = element_text(face = "bold", size = rel(1.2)),
+          strip.text = element_text(face = "bold", size = rel(.8)),
+          legend.text = element_text(face = "bold"),
+          legend.title = element_text(face = "bold", size = rel(1.2)),
+          plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
+  if(any((slopes %>% filter(Trait == trait))$sig == "sig")){
+   p<- p+
+    geom_rect(data = rects %>% filter(sig == "sig" & Trait == trait), fill = "khaki1", alpha = .5,
+              aes(xmin = -.5, xmax = 1.5, ymin = -Inf, ymax = Inf)) +
+      geom_violin(data = ranef_slopes %>% filter(Trait == trait & sig == "sig" & term == "No Event"), aes(x = 0),
+                fill = "royalblue", color = NA, alpha = .3) +
+      geom_violin(data = ranef_slopes %>% filter(Trait == trait & sig == "sig" & term == "Event"), aes(x = 1),
+                fill = "royalblue", color = NA, alpha = .3) +
+    geom_errorbar(data = . %>% filter(sig == "sig"), aes(ymin = lower, ymax = upper), width = .1) +
+    geom_point(data = slopes %>% filter(Trait == trait & sig == "sig"),
+               aes(shape = term), color = "royalblue", size = 2) + #, shape = 15
+    geom_point(data = slopes %>% filter(Trait == trait & sig == "sig" & term == "No Event"),
+               aes(shape = term), color = "black", size = 2, shape = 2) +
+    geom_point(data = slopes %>% filter(Trait == trait & sig == "sig" & term == "Event"),
+               aes(shape = term), color = "black", size = 2, shape = 0) +
+    geom_label(data = slopes %>% filter(Trait == trait & sig == "sig"),
+               aes(y = -.27, label = ifelse(abs(b) < .001, round(b, 4), 
+               ifelse(abs(b) < .01, round(b,3), round(b,2)))), 
+               fill = "royalblue", color = "white", size = 3) +
+    geom_label(data = slopes %>% filter(Trait == trait & sig == "sig" & term == "Event"),
+               aes(y = .27, label = paste("d =", ifelse(abs(d) < .001, round(d, 4), 
+               ifelse(abs(d) < .01, round(d,3), round(d,2))), sep = " ")), 
+               fill = "royalblue", color = "white", size = 3, nudge_x = -.5)
+  }
+  # ggsave(sprintf("%s/results/plots/%s_slopes.png", data_path, trait), width = 8, height = 6)
+  p
+}
+```
+
+#### Sample Plots  
+Here is a sample plot of group differences I'll use for my talk. 
+```{r}
+trait = "Agreeableness"
+event = "Marriage"
+color = "gray"
+slopes %>% filter(shrt_Trait == "A" & shrt_Event == "Married") %>%
+  ggplot(aes(x = term2, y = b)) +
+  scale_y_continuous(limits = c(-.3,.3), breaks = seq(-.3,3,.3)) +
+  scale_x_continuous(limits = c(-.5,1.5)) +
+    geom_violin(data = ranef_slopes %>% filter(Trait == trait & sig == "ns" & term == "No Event" & Event == event),
+                aes(x = 0), color = NA, fill = color, alpha = .3) +
+    geom_violin(data = ranef_slopes %>% filter(Trait == trait & sig == "ns" & term == "Event" & Event == event),
+    aes(x = 1), color = NA, fill = color, alpha = .3) +
+    scale_shape_manual(values = c(15, 17)) +
+    geom_errorbar(data = . %>% filter(sig == "ns" & Event == event), aes(ymin = lower, ymax = upper), width = .1) +
+    geom_point(data = slopes %>% filter(Trait == trait & sig == "ns"  & Event == event),
+               aes(shape = term), color = color, size = 2) + #shape = 15, 
+    geom_point(data = slopes %>% filter(Trait == trait & sig == "ns" & term == "No Event" & Event == event),
+               aes(shape = term), color = "black", size = 2, shape = 2) +
+    geom_point(data = slopes %>% filter(Trait == trait & sig == "ns" & term == "Event" & Event == event),
+               aes(shape = term), color = "black", size = 2, shape = 0) +
+    geom_label(data = slopes %>% filter(Trait == trait & sig == "ns" & Event == event),
+               aes(y = -.27, label = ifelse(abs(b) < .001, round(b, 4), 
+               ifelse(abs(b) < .01, round(b,3), round(b,2)))), 
+               fill = color, color = "black", size = 3) +
+    geom_label(data = slopes %>% filter(Trait == trait & sig == "ns" & term == "Event" & Event == event),
+               aes(y = .27, label = paste("d =", ifelse(abs(d) < .001, round(d, 4), 
+               ifelse(abs(d) < .01, round(d,3), round(d,2))), sep = " ")), 
+               fill = color, color = "black", size = 3, nudge_x = -.5) +
+    labs(x = NULL, y = "Estimate", title = trait, shape = NULL) +
+    facet_wrap(~Event, nrow = 2) +
+    theme_classic() +
+    theme(legend.position = "bottom",
+          axis.text = element_text(face = "bold", size = rel(1.2)),
+          axis.text.x = element_blank(),#element_text(face = "bold", size = rel(1.2), angle = 45, hjust = 1),
+          axis.ticks.x = element_blank(),
+          axis.title = element_text(face = "bold", size = rel(1.2)),
+          strip.text = element_text(face = "bold", size = rel(1.2)),
+          legend.text = element_text(face = "bold"),
+          legend.title = element_text(face = "bold", size = rel(1.2)),
+          plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
+
+  # ggsave(sprintf("%s/results/plots/Agreeableness_Marriage_slopes.png", data_path), width = 4, height = 4)
+```
+
+### All Slopes
+```{r run slopes fun, results = 'asis', fig.width = 8, fig.height = 6}
+for(x in big5$new){
+  cat('\n\n  ####', x, '\n\n  ')
+  slope_plot_fun(x)
+}
+```
+
+
+```{r, fig.width = 14, fig.height = 7}
+rects <- expand.grid(
+  Trait = unique(bfi_growth$Trait),
+  term = c("Event", "No Event"),
+  xstart = 0.5, 
+  xend = 1.5, 
+  b = NA_real_,
+  Event = unique(bfi_growth$Event), 
+  Estimate = 1, stringsAsFactors = F) %>% tbl_df %>%
+  full_join(sig)  %>% 
+  filter(!(Event %in% c("MomDied", "DadDied", "none"))) %>%
+  mutate(term2 = as.numeric(mapvalues(term, unique(term), c(1,0))),
+        sig = ifelse(is.na(sig) == T, "ns", sig),
+        Trait = factor(Trait, levels = big5$old),
+        Event = mapvalues(Event, events$old, events$breaks),
+        Event = factor(Event, levels = events$breaks))
+
+soc.tab %>% filter(Event != "Mean") %>%
+  ggplot(aes(x = term2, y = b)) +
+    scale_color_manual(values = c("grey", "royalblue")) +
+    scale_fill_manual(values = c("white", "khaki1")) +
+    scale_x_continuous(limits = c(-.5,1.5), breaks = c(0,1), labels = c("N", "Y")) +
+    scale_y_continuous(limits = c(-.175,.175), breaks = c(-.1,0,.1), labels = c("-.1", "0", ".1")) +
+    geom_rect(data = rects,
+      aes(xmin = -.5, xmax = 1.5, ymin = -Inf, ymax = Inf, fill = sig),
+      alpha = .5) +
+    geom_hline(aes(yintercept = 0), linetype = "dashed") +
+    geom_errorbar(aes(ymin = lower, ymax = upper), width = .1) + 
+    geom_point(data = . %>% filter(term2 == 0), aes(color = sig), 
+               shape = 15, size = 2) +
+    geom_point(data = . %>% filter(term2 == 0), color = "black", 
+               shape = 0, size = 2) +
+    geom_point(data = . %>% filter(term2 == 1), aes(color = sig), 
+               shape = 17, size = 2) +
+    geom_point(data = . %>% filter(term2 == 1), color = "black", 
+               shape = 2, size = 2) +
+  labs(x = NULL, y = "Estimated Slope") +
+    facet_grid(Trait~Event) +
+    theme_classic() +
+    theme(#axis.text.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.text.y = element_text(face = "bold", size = rel(2)),
+          strip.text.x = element_text(face = "bold"),
+          axis.text = element_text(face = "bold", size = rel(1.2)),
+          axis.title = element_text(face = "bold", size = rel(1.2)),
+          legend.position = "none")
+# ggsave(sprintf("%s/results/plots/slopes_all.png", data_path), width = 14, height = 7)
+```
+
+```{r, include=F}
+soc.res <- bfi_growth %>% unnest(b.fixef.tab, .drop = T) %>% filter((Event != "none" & term == "Slope:le.group") | (Event == "none" & term == "new.wave"))
+# save(soc.res, soc.tab, bfi_growth_tab, ints, file = sprintf("%s/results/soc_tab.Rdata", data_path))
+```
