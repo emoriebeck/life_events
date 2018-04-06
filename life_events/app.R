@@ -94,11 +94,11 @@ library(tidybayes)
 library(ggridges)
 library(tidyverse)
 
-load(url("https://github.com/emoriebeck/life_events/blob/master/mean_diff.RData?raw=true"))
-load(url("https://github.com/emoriebeck/life_events/raw/master/selection_samples.RData"))
-load(url("https://github.com/emoriebeck/life_events/raw/master/growth_samples.RData"))
-load(url("https://github.com/emoriebeck/life_events/raw/master/growth_pred.RData"))
-load(url("https://github.com/emoriebeck/life_events/raw/master/plot_files.RData"))
+load(url("https://github.com/emoriebeck/life_events/blob/master/results/mean_diff.RData?raw=true"))
+load(url("https://github.com/emoriebeck/life_events/raw/master/results/selection_samples.RData"))
+load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_samples.RData"))
+load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_pred.RData"))
+load(url("https://github.com/emoriebeck/life_events/raw/master/results/plot_files.RData"))
 
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
@@ -214,6 +214,8 @@ server <- function(input, output, session) {
                legend.title = element_text(face = "bold", size = rel(1.2)),
                strip.text = element_text(face = "bold", size = rel(.8)),
                plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
+     } else if (input$plot == "Trace"){
+       
      } else {
        color = "gray"
        df.sl <-  slopes %>% filter(shrt_Trait %in% input$traits3 & shrt_Event %in% input$events3) %>% 
