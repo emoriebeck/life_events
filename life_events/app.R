@@ -30,6 +30,17 @@ ui <- fluidPage(
   #titlePanel("Idiographic Personality Networks"),
   # Sidebar with a slider input for number of bins 
   tabsetPanel(
+    tabPanel("Matching", 
+             sidebarLayout(
+               sidebarPanel(
+                 selectizeInput("cat", label = "Choose Matching Category",
+                                choices = ""),
+                 selectizeInput("events", label = "Choose Event", 
+                                choices = "")
+               ),
+               mainPanel(
+                 plotOutput("corPlots")
+               ))),
     tabPanel("Selection Effects", 
              sidebarLayout(
                sidebarPanel(
@@ -50,7 +61,7 @@ ui <- fluidPage(
              sidebarLayout(
                sidebarPanel(
                  selectizeInput("plot", label = "Choose Plot Type:",
-                                choices = c("Trajectories", "Posterior Distributions", "Group Differences", "Trace")),
+                                choices = c("Trajectories", "Posterior Distributions", "Group Differences")),
                  conditionalPanel(
                    condition = "input.plot != 'Trace'",
                  
@@ -78,17 +89,6 @@ ui <- fluidPage(
                  plotOutput("socPlots"),
                  textOutput("size")
                ))),
-                 tabPanel("Matching", 
-                          sidebarLayout(
-                            sidebarPanel(
-                              selectizeInput("cat", label = "Choose Matching Category",
-                                             choices = ""),
-                              checkboxGroupInput("events", label = "Choose Events", 
-                                                 choices = "")
-                            ),
-                            mainPanel(
-                              plotOutput("corPlots")
-                            ))),
     wellPanel(
       helpText(   a("Lab Website",     href="http://pmdlab.wustl.edu/beck/projects/networks.html")
       )
@@ -114,8 +114,8 @@ load(url("https://github.com/emoriebeck/life_events/raw/master/results/plot_file
 server <- function(input, output, session) {
   observe({
       events <- unique(diff$Event)
-      updateCheckboxGroupInput(session, 'events', choices = c(events),
-                               selected = events[1:5])
+      updateSelectizeInput(session, 'events', choices = c(events),
+                               selected = events[1])
       cats <- unique(diff$Category)
       updateSelectizeInput(session, 'cat', choices = c("", cats),
                            selected = "BFI")
@@ -141,7 +141,7 @@ server <- function(input, output, session) {
   
    output$corPlots <- renderPlot({
      df <- diff %>% unnest(d, .drop = T) %>% 
-       filter(Category == input$cat & Event %in% input$events)
+       filter(Event %in% input$events)
      
      df %>%
        group_by(Event, match_set, var) %>%
@@ -150,17 +150,18 @@ server <- function(input, output, session) {
        ggplot(aes(x = var, y = d, shape = match_set)) +
        scale_shape_manual(values = c(19,1)) +
        scale_y_continuous(limits = c(-1.5, 1.5), breaks = seq(-1, 1, 1)) +
-       geom_hline(aes(yintercept = 0), linetype = "dashed", size = .5) +
-       geom_point(size = 3) +
+       geom_hline(aes(yintercept = 0), linetype = "dashed", size = .25) +
+       geom_point(size = 1.5) +
        labs(y = "Cohen's d", x = NULL, shape = NULL) +
-       coord_flip() +
+       # coord_flip() +
        facet_grid(.~Event) +
        theme_classic() +
        theme(legend.position = "bottom",
-             axis.text.y = element_text(face = "bold"),
-             axis.text.x = element_text(face = "bold", size = rel(1.2)),
+             axis.text.x = element_text(face = "bold", size = rel(.7), angle = 45, hjust = 1),
+             axis.text.y = element_text(face = "bold", size = rel(1.2)),
              axis.title = element_text(face = "bold", size = rel(1.2)),
              strip.text = element_text(face = "bold"),
+             plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5),
              legend.text = element_text(face = "bold"),
              legend.title = element_text(face = "bold", size = rel(1.2)))
       # generate bins based on input$bins from ui.R
@@ -228,9 +229,11 @@ server <- function(input, output, session) {
                plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
      } else if (input$plot == "Trace"){
        df <- growth_samples %>% tbl_df %>%
-         filter(Trait %in% input$traits4 & Event %in% input$events4)
+         filter(Trait %in% input$traits4 & Event %in% input$events4) %>%
+         spread(key = term, value = estimate) %>%
+         mutate_if(is.factor, funs(as.integer))
        
-       mcmc_trace(df,
+       mcmc_trace(df, pars = unique(growth_samples$term),
                   size = .25) +
          theme_classic() +
          theme(legend.position = c(.5, .15),
