@@ -4,14 +4,13 @@ author: "Emorie Beck"
 date: "04/04/2018"
 output:
   html_document:
-    number_sections: yes
+    number_sections: no
     theme: united
     highlight: tango
     df_print: paged
     code_folding: hide
     toc: true
     toc_float: true
-    toc_depth: 2
   pdf_document:
     number_sections: yes
     toc: yes
@@ -467,7 +466,7 @@ The function below looks a little complicated. But here's what it does. We have 
 # this function actually runs the propensity score weighting procedure
 psw_fun <- function(event, Chain, match_set){
   print(sprintf("%s Chain %s", event, Chain))
-  Ratio <- ifelse(event %in% c("ChldMvOut", "ParDied", "Retire", "MoveIn"), 8, 4)
+  Ratio <- ifelse(event %in% c("ChldMvOut", "ParDied", "MoveIn"), 8, 4)
   Caliper <- ifelse(match_set == "socialization" & 
       event %in% c("SepPart", "Unemploy", "Retire", "FrstJob"), .05, 
       ifelse(match_set == "socialization" & 
@@ -520,7 +519,8 @@ Let's run it now!
 \footnotesize
 ```{r run psw, eval = F}
 nested.psw <- nested.psw %>%
-  filter(chain == 1) %>%
+  filter((chain == 1 & match_set == "socialization") |
+           match_set == "selection") %>%
   mutate(psw = pmap(list(Event, chain, match_set), psw_fun),
          psw.df = map(psw, possibly(psw_df, NA_real_)),
          bal.df = map(psw, unbalanced_fun),
@@ -528,9 +528,6 @@ nested.psw <- nested.psw %>%
          matched = map(bal.df, ~.$matched),
          unbal.tab = map(bal.df, possibly(~.$unbalanced, NA_real_)),
          smalldiff.tab = map(bal.df, possibly(~.$smalldiff, NA_real_)))
-
-nested.psw <- nested.psw %>% filter(!(match_set == "socialization" & chain == 1 &
-      Event %in% c("FrstJob"))) %>% bind_rows(nested.psw2)
 
 save(nested.psw, file = paste(data_path, "results/psw.RData", sep = "/"))
 nested.psw <- nested.psw %>% select(-psw)
@@ -608,8 +605,10 @@ kable(smalldiff.tab, "html", longtable = T, booktabs = T, digits = 2,
   kable_styling(bootstrap_options = c("striped","repeat_header"),full_width = F)
 ```
 
-## Plots
+## Plots   
 In addition to the balance plots that highlight the attenuation of mean differences in general, it is also interesting to see this for specific variables. To do that, we'll calculate Cohen's d (standardized mean differences) between groups for each matching variable in both the matched and unmatched sets. Then, we'll plot them together.  
+
+### Standardized Mean Differences {.tabset}
 ```{r}
 cohens_d <- function(x, y) {
     lx <- length(x)- 1; ly <- length(y)- 1
@@ -686,19 +685,20 @@ p<-diff %>% unnest(d, .drop = T) %>% #filter(Category == "HH") %>%
         plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5),
           legend.text = element_text(face = "bold"),
           legend.title = element_text(face = "bold", size = rel(1.2)))
-p
+print(p)
 }
 ```
 
 ```{r, fig.width = 10, fig.height=4, results = 'asis'}
-lapply(events$old[events$old != "none"], function(x){
+for (x in events$old[events$old != "none"]){
   cat('\n\n####', x, '\n\n  ')
   diff_fun(x)
-})
+}
 # ggsave(sprintf("%s/results/plots/psm_match.png", data_path), width = 10, height = 4)
 ```
 
 
+### Propensity Scores  
 What about the distribution of propensity scores? Well, we can also look at the propensity score matched sets. The chunk below will take the propensity scores ("distances" from the `matchit` object) and plot those as a function of group and weight. Larger points on the graph indicate participants who were weighted more. For example, a parpticipant with a from the Event group who had four matches from the no event group would be weighted 1, while each of their matches would be weighted .25.  We don't actually use the weights because are matching, but they are useful to visualize essentially how the matching procedure approximates using survey weights.  
 ```{r}
 sample_fun <- function(df){
@@ -878,7 +878,7 @@ save(bfi_selection, file = sprintf("%s/results/selection.RData", data_path))
 ## Plots {.tabset}  
 Now, the fun part. Next, we'll use the samples to plot the posterior distributions (after converting log odds to odds) as well as the mean estimates. We'll do this for all trait x event x matching combinations. Note that within a Bayesian framework, we aren't talking about significance, but I will highlight those models whose mean estimates suggest that in 95\% of our samples, the highest posterior density interval does not include 1 (no difference in odds).  
 ```{r, eval = F}
-load(url(sprintf("%s/results/selection.RData", data_path)))
+load(url(sprintf("%s/results/selection_small.RData", data_path)))
 bfi_samples <- bfi_selection %>% unnest(samples) %>%
   filter(term == "value") %>%
   mutate(estimate = exp(estimate))
@@ -890,7 +890,7 @@ save(sel.tab, bfi_selection, file = sprintf("%s/results/sel.tab.RData", data_pat
 ```
 
 ```{r}
-load(url(sprintf("%s/results/selection.RData", data_path)))
+load(url(sprintf("%s/results/selection_small.RData", data_path)))
 load(url(sprintf("%s/results/selection_samples.RData", data_path)))
 load(url(sprintf("%s/results/sel.tab.RData", data_path)))
 
@@ -926,7 +926,7 @@ p <- bfi_samples %>% full_join(bfi_qi %>% select(Event:term, sig)) %>%
         legend.text = element_text(face = "bold", size = rel(1.2)))
 # ggsave(p, file = sprintf("%s/results/plots/selection_%s_posterior.png", data_path, match_set),
        # width = 14, height = 6)
-p
+print(p)
 }
 ```
 
@@ -953,11 +953,11 @@ bfi_samples %>% full_join(bfi_qi %>% select(Event:term, sig)) %>%
        # width = 6, height = 2)
 ```
 
-```{r, results='asis'}
-lapply(c("Matched", "Unmatched"), function(x){
+```{r, results='asis', fig.height = 6, fig.width=14}
+for (x in c("Matched", "Unmatched")){
   cat('  \n\n### ', x, ' Selection Effects\n\n  ', sep ="")
   sel_plot_fun(x)
-})
+}
 ```
 
 
@@ -1338,7 +1338,7 @@ save(bfi_growth, file = sprintf("%s/results/lav_growth.RData", data_path))
 ## Table Results  
 Let's create some tables. Figures are more fun, but sometimes it's nice to see different values.  
 ```{r pool LGM, results='asis'}
-load(url(sprintf("%s/results/lav_growth.RData", data_path)))
+load(url(sprintf("%s/results/lav_growth_small.RData", data_path)))
 
 big5 <- tibble(
   old = c("E", "A", "C", "N", "O"),
@@ -1779,7 +1779,7 @@ traj_fun <- function(trait){
           strip.text = element_text(face = "bold", size = rel(.7)),
           plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
   # ggsave(sprintf("%s/results/plots/%s_trajectories.png", data_path, trait), width = 6, height = 5)
-  p
+  print(p)
 }
 
 # refactor sig df
@@ -1846,7 +1846,7 @@ growth_pred %>% unite(comb, Trait, Event, sep = ".", remove = F) %>%
 
 ```{r all ML traj, results = 'asis', fig.width = 4, fig.height = 4}
 for (x in big5$new){
-  cat('\n\n  ####', x, '\n\n  ')
+  cat('\n\n#### ', x, '  \n\n  ')
   traj_fun(x)
 }
 ```
@@ -1899,7 +1899,7 @@ ind_plot_fun <- function(trait){
           legend.title = element_text(face = "bold", size = rel(1.2)),
           plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
    # ggsave(sprintf("%s/results/plots/%s_ranef_trajectories.png", data_path, trait), width = 6, height = 5)
-   p
+   print(p)
 }
 ```
 
@@ -1930,7 +1930,7 @@ Here's a sample plot I use in my talk to demonstrate how to understand it.
 
 ```{r run ind traj, results = 'asis', fig.width = 6, fig.height = 5}
 for (x in big5$new){
-  cat('\n\n  ####', x, '\n\n  ')
+  cat('\n\n#### ', x, '  \n\n  ')
   ind_plot_fun(x)
 }
 ```
@@ -2053,7 +2053,7 @@ slope_plot_fun <- function(trait){
                fill = "royalblue", color = "white", size = 3, nudge_x = -.5)
   }
   # ggsave(sprintf("%s/results/plots/%s_slopes.png", data_path, trait), width = 8, height = 6)
-  p
+  print(p)
 }
 ```
 
@@ -2103,14 +2103,14 @@ slopes %>% filter(shrt_Trait == "A" & shrt_Event == "Married") %>%
   # ggsave(sprintf("%s/results/plots/Agreeableness_Marriage_slopes.png", data_path), width = 4, height = 4)
 ```
 
-### All Slopes
 ```{r run slopes fun, results = 'asis', fig.width = 8, fig.height = 6}
 for(x in big5$new){
-  cat('\n\n  ####', x, '\n\n  ')
+  cat('\n\n#### ', x, '  \n\n  ')
   slope_plot_fun(x)
 }
 ```
 
+### All Slopes  
 
 ```{r, fig.width = 14, fig.height = 7}
 rects <- expand.grid(
