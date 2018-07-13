@@ -59,7 +59,10 @@ library(ggridges)
 
 data_path <- "~/Box/network/other projects/PCLE Replication"
 data_path <- "https://github.com/emoriebeck/life_events/raw/master"
+data_path <- "C:/Users/PATH Lab/Box/network/other projects/PCLE Replication"
 model_path <- "~/Box/Models/PCLE Replication"
+model_path <- "C:/Users/PATH Lab/Box/Models/PCLE Replication"
+
 ```
 
 
@@ -963,7 +966,86 @@ for (x in c("Matched", "Unmatched")){
 
 
 
-#Socialization Effects: Growth Models
+# Measurement Invariance
+```{r minv, results = 'hide', message = F, warning=F, eval = F}
+mi.mod <- '
+  T1 =~ T1_1 + T1_2 + T1_3 
+  T2 =~ T2_1 + T2_2 + T2_3 
+  T3 =~ T3_1 + T3_2 + T3_3 
+'
+
+constrainedVar <- list(
+  paste("T1",1:3, sep = "_"),
+  paste("T2",1:3, sep = "_"),
+  paste("T3",1:3, sep = "_")
+)
+
+mi_fun <- function(df){
+  df <- data.frame(df)
+  longInvariance(mi.mod, auto=1, constrainAuto=TRUE, strict = T, #group = "le.group",
+                 varList=constrainedVar, data=df, missing ="FIML")
+}
+
+mi_nested <- bfi_wide %>% 
+  group_by(Trait) %>%
+  nest() %>%
+  mutate(mi = map(data, possibly(mi_fun, NA_real_)))
+```
+
+Now let's write a short function to extract the terms we need for testing longitudinal invariance.  
+```{r}
+extract_fun <- function(fit){
+  ldply(fit, fitmeasures) %>%
+    select(.id, cfi, rmsea) %>% 
+    mutate_at(vars(cfi, rmsea, srmr), funs(delta = 
+      ifelse(.id == "fit.loadings", .[.id == "fit.configural"] - .[.id == "fit.loadings"],
+      ifelse(.id == "fit.thresholds", .[.id == "fit.loadings"] - .[.id == "fit.thresholds"],
+      ifelse(.id == "fit.residuals", .[.id == "fit.thresholds"] - .[.id == "fit.residuals"], 
+      ifelse(.id == "fit.means", .[.id == "fit.residuals"] - .[.id == "fit.means"], NA))))))
+}
+
+mi_nested <- mi_nested %>%
+  mutate(res = map(mi, extract_fun))
+
+mi_nested %>% unnest(res)
+```
+
+Going with configural invariance: 
+
+```{r}
+config <- '
+## define latent variables
+  T1 =~ T1_1 + T1_2 + T1_3 
+  T2 =~ T2_1 + T2_2 + T2_3 
+  T3 =~ T3_1 + T3_2 + T3_3 
+
+
+## correlated residuals across time
+T1_1 ~~ T1_2 + T1_3
+T1_2 ~~ T1_3
+T2_1 ~~ T2_2 + T2_3
+T2_2 ~~ T2_3
+T3_1 ~~ T3_2 + T3_3
+T3_2 ~~ T3_3
+
+I =~ 1*T1 + 1*T2 + 1*T3
+S =~ 0*T1 + 1*T2 + 2*T3
+
+## free latent means at later times (only set the scale once)
+T2 ~ NA*1
+T3 ~ NA*1
+'
+
+mi_nested <- mi_nested %>%
+  mutate(grw.config = map(data, ~growth(sec.order, data = ., missing = "FIML")))
+
+extract_fun <- function(fit){
+  parameterestimates(fit)
+}
+```
+
+
+# Socialization Effects: Growth Models
 The growth models are a little more complicated. Each of the 700 models themselves are so large after we run them (each is several GB), we can't pool them like we did the Bayesian logistic regression models. We'd need a computer with some 30 GB of RAM and several additional months. So instead, we're going to use Rubin's Rules to pool the estimates. To do that, though, we need to extract certain elements from the models (e.g. standard errors of simple effects estimates, hypothesis tests of means, predicted values of both fixed and random effects), which is what the functions below do.  
 
 ## Define Functions {.tabset}  
@@ -1056,7 +1138,7 @@ plot_fun <- function(fit, event){
 ### Pooling  
 Sorry in advance because there is a lot happening with this pooling function. The basic logic of it is this. These growth models are so large that most computers can only handle one at a time. So I need to load each model into R separately, extract everything I could possibly need from it, discard the model, and then save the stuff I need. I do this for each trait x event combination 10 times then pool my extracted results across those imputations using Rubin's rules.  
 ```{r pool fun}
-pool_fun <- function(event, trait){
+pool_fun <- function(event, trait, RE){
   cat(event, trait, sep = " ")
   nchains = 10
   
@@ -1085,15 +1167,24 @@ eff_fun <- function(chain){
       separate(term, c("PROC_SID", "term"), sep = ",")
     eff <- fixef(fit, probs = c(.025, .975))[, 1]
     if(event != "none"){
-      ind_coef <- le_dat %>% filter(Event == event & PROC_SID %in% unique(ind_ranef$PROC_SID)) %>%
-        select(PROC_SID, le.group) %>% 
-        full_join(ind_ranef %>% mutate(PROC_SID = as.numeric(PROC_SID))) %>%
-        mutate(term = str_replace(term, "le.group1", "le.group"), 
-               b = ifelse(term == "Slope", eff["new.wave"] + eff["new.wave:le.group"]*le.group + estimate,
-               eff["Intercept"] + eff["le.group"]*le.group + estimate))
+        ind_coef <- le_dat %>% filter(Event == event & PROC_SID %in% unique(ind_ranef$PROC_SID)) %>%
+          select(PROC_SID, le.group) %>% 
+          full_join(ind_ranef %>% mutate(PROC_SID = as.numeric(PROC_SID)))
+      if(RE == "intslope"){
+        ind_coef <- ind_coef %>%
+          mutate(term = str_replace(term, "le.group1", "le.group"), 
+                 b = ifelse(term == "new.wave", eff["new.wave"] + eff["new.wave:le.group"]*le.group + estimate,
+                 eff["Intercept"] + eff["le.group"]*le.group + estimate))
+      } else{
+        ind_coef <- ind_coef %>%
+          full_join(crossing(PROC_SID = unique(ind_coef$PROC_SID), term = "Slope")) %>%
+          mutate(term = str_replace(term, "le.group1", "le.group"), 
+                 b = ifelse(term == "new.wave", eff["new.wave"] + eff["new.wave:le.group"]*le.group,
+                            eff["Intercept"] + eff["le.group"]*le.group + estimate))
+      }
       } else{
         ind_coef <- ind_ranef %>% mutate(PROC_SID = as.numeric(PROC_SID)) %>%
-          mutate(b = ifelse(term == "Slope", eff["new.wave"] + estimate, eff["Intercept"] + estimate),
+          mutate(b = ifelse(term == "new.wave", eff["new.wave"] + estimate, eff["Intercept"] + estimate),
                  le.group = 0)
       }
     
@@ -1103,8 +1194,8 @@ eff_fun <- function(chain){
       mutate(type = "raneff") %>%
       mutate_at(vars(estimate:upper), funs(ifelse(grepl("cor_", term) == F, .^2,.))) %>%
       mutate(term = ifelse(term != "sigma", str_extract(term, "(?<=__).*$"), term),
-             term = mapvalues(term, unique(term), 
-          c("\\tau_{00}", "\\tau_{01}", "\\tau_{11}", "\\sigma^2")))
+             term = mapvalues(term, c("Intercept", "new.wave", "Intercept__new.wave", "sigma"), 
+                              c("\\tau_{00}", "\\tau_{01}", "\\tau_{11}", "\\sigma^2")))
     
     # predicted values, se's, and hypothesis tests
     pred <- plot_fun(fit, event)
@@ -1225,57 +1316,55 @@ if(any(grepl("le.group", rownames(fixeffs_mean)))){
 ### brm Models
 The function below actually runs the `brms` models using the `brm()` function. Note that the model formula is different for the life event v. no life event models. Because data storage is a problem. For each iteration of the models, we'll filter out the responses we need. I don't want to store these in the already unwieldily large model data frame. Note that we use the default `brms` priors in most cases, with the exception of the variance terms. For those we use a half-cauchy distribution, which is better than a student's t because it doesn't include negative terms (and variances can't be negative.). In addition, some models had convergence issues. For these models, we'll up the number of iterations from 2000 to 8000, the warmup from 1000 iterations to 4000 iterations, the `adapt_delta` to .99 rather than .8, and the maximum treedepth from 10 to 20. We'll save each model to a .RData file that we'll load in and pool using our other functions. 
 ```{r}
-growth_fun <- function(event, trait){
+growth_fun <- function(event, trait, RE, match){
   no_cores <- detectCores()-1
-  k <- ifelse(trait == "C", 10,1)
-  lapply(k:10, function(x){
+  k <- 1 #ifelse(trait == "C", 10,1)
+  l <- ifelse(event == "none", 1, 10)
+  lapply(k:l, function(x){
       rstan_options(auto_write = TRUE)
       options(mc.cores = parallel::detectCores()-1)
-    print(paste(event, trait, x), sep = " ")
-    if(event == "none"){
-      subs <- unique((nested.psw %>% filter(match_set == "socialization" & chain == 1) %>%
-                        unnest(psw.df))$PROC_SID)
-      df <- bfi.imp %>% filter(chain == x & Trait == trait & PROC_SID %in% subs) %>%
+      print(paste(event, trait, x), sep = " ")
+      # get the correct data for each chain
+      df <- bfi.imp %>% filter(chain == x & Trait == trait) %>% #& PROC_SID %in% subs) %>%
         gather(key = item, value = value, T1_1:T3_3) %>%
         separate(item, c("wave", "item"), sep = "_") %>%
         mutate(new.wave = as.numeric(mapvalues(wave, c("T1", "T2", "T3"), 0:2))) %>%
         group_by(PROC_SID, new.wave, sex.c, age, age.c, age.c2, age.c3) %>%
-        summarize(value = mean(value, na.rm = T))
-      Prior <- get_prior(value ~ new.wave + (new.wave|PROC_SID), data = df)
-      Prior <- set_prior("cauchy(0,10)", class = "sd")
-      start.tmp <- Sys.time()
-      fit <- brm(value ~ new.wave + (new.wave|PROC_SID),
-                 data = df, control = list(adapt_delta = 0.99))
-      # fit <- lmer(value ~ sex.c*new.wave + age.c*new.wave + age.c2*new.wave + (new.wave|PROC_SID), data = df)
-      end.tmp <- Sys.time()
-    } else{
+        summarize(value = mean(value, na.rm = T)) 
+      # get event data
+      if(event != "none"){
+        df <- df %>% 
+        left_join(le_dat %>% select(Event, PROC_SID, le.group) %>% filter(Event == event)) %>%
+        mutate(le.group = factor(le.group))
+      }
+    # filter out subjects in matched models
+    if(event != "none" & match == "matched"){
       subs <- unique((nested.psw %>% 
         filter(match_set == "socialization" & chain == 1 & Event == event) %>%
           unnest(psw.df))$PROC_SID)
-      df <- bfi.imp %>% filter(Trait == trait & chain == x & PROC_SID %in% subs) %>%
-        gather(key = item, value = value, T1_1:T3_3) %>%
-        separate(item, c("wave", "item"), sep = "_") %>%
-        mutate(new.wave = as.numeric(mapvalues(wave, c("T1", "T2", "T3"), 0:2))) %>%
-        group_by(PROC_SID, new.wave, sex.c, age, age.c, age.c2, age.c3) %>%
-        summarize(value = mean(value, na.rm = T)) %>% 
-        left_join(le_dat %>% select(Event, PROC_SID, le.group) %>% filter(Event == event)) %>%
-        mutate(le.group = factor(le.group))
+      df <- df %>% filter(PROC_SID %in% subs)
+    } 
+      # set prior
+      Prior <-  c(set_prior("cauchy(0,1)", class = "sd"), set_prior("cauchy(0,1)", class = "sigma"))
+      # get formula
+      if(RE == "intslope" & event != "none"){f <- value ~ new.wave*le.group + (new.wave|PROC_SID)} 
+      else if (RE == "int" & match == "matched"){f <- value ~ new.wave*le.group + (1|PROC_SID)}
+      else{f <- value ~ new.wave + (new.wave|PROC_SID)}
+      # set specifications for models with convergence issues
       if((trait == "A" & event %in% c("ChldMvOut", "MoveIn", "ChldBrth")) | 
          (trait == "E" & event %in% c("ParDied")) |
          (trait == "C" & event %in% c("Retire")) |
          (trait == "O" & event %in% c("Unemploy")) |
          event %in% c("PartDied", "FrstJob", "Divorce", "LeftPar")){
           Iter <- 8000; Warmup <- 4000; treedepth <- 20
-         } else {Iter <- 2000; Warmup <- 1000; treedepth <- 10}
-          Prior <- get_prior(value ~ new.wave*le.group + (new.wave|PROC_SID), data = df)
-          Prior <-  c(set_prior("cauchy(0,1)", class = "sd"), set_prior("cauchy(0,1)", class = "sigma"))
+      } else {Iter <- 2000; Warmup <- 1000; treedepth <- 10}
+      # run models 
       start.tmp <- Sys.time()
-      fit <- brm(value ~ new.wave*le.group + (new.wave|PROC_SID),  data = df,  prior = Prior,
-                 control = list(adapt_delta = 0.99, max_treedepth = treedepth), iter = Iter, warmup = Warmup)
+      fit <- brm(formula = f,  data = df,  prior = Prior, iter = Iter, warmup = Warmup,
+                 control = list(adapt_delta = 0.99, max_treedepth = treedepth))
       end.tmp <- Sys.time()
-      }
       print(end.tmp - start.tmp)
-      file <- sprintf("%s/unpooled/%s_%s_chain%s_brm_cv.RData", model_path, trait, event, x)
+      file <- sprintf("%s/unpooled/%s_%s_chain%s_brm_%s.RData", model_path, trait, event, x, RE)
       save(fit, file = file)
       rm(fit)
   return(T)
@@ -1290,11 +1379,25 @@ Finaly, let's run the models. Please don't actually do this unless you have mont
 load(url(sprintf("%s/results/psw_small.RData", data_path)))
 load(url(sprintf("%s/results/mi_dat_small.RData", data_path)))
 
+# intslope + matched + event = socialization models
+# intslope + unmatched + none = normative change models
+# intslope + unmatched + event = unmatched socialization models
+# int + matched + event = no random slope models
 bfi_growth <- crossing(
-  Event = c(unique(nested.psw$Event)),#, "none"),
-  Trait = unique(bfi_wide$Trait)
+  Event = c(unique(nested.psw$Event), "none"),
+  Trait = unique(bfi_wide$Trait),
+  RE = c("int", "intslope"),
+  match = c("matched", "unmatched")
   ) %>%
-  mutate(b.grp.mod = map2(Event, Trait, growth_fun))
+  filter(!(RE == "int" & Event == "none") & 
+         !(match == "matched" & Event == "none") & 
+         !(RE == "int" & match == "unmatched"))   %>%
+  filter(!Event %in% c("none", "MomDied", "DadDied")) %>%
+  filter(match == "unmatched" & Trait %in% c("E", "A", "C")) %>%
+  mutate(b.grp.mod = pmap(list(Event, Trait, RE, match), growth_fun),
+         model = ifelse(RE == "intslope" & match == "matched", "Matched Socialization", 
+                 ifelse(RE == "intslope" & match == "unmatched" & event != "none", "Unmatched Socialization",
+                 ifelse(RE == "int", "No Random Slope", "Normative Change Models"))))
 ```
 
 ## Pool Results
