@@ -60,15 +60,16 @@ ui <- fluidPage(
     tabPanel("Socialization Effects", 
              sidebarLayout(
                sidebarPanel(
-                 selectizeInput("plot", label = "Choose Plot Type:",
+                 selectizeInput("plot", label = "Choose Plot Type:", selected = "Posterior Distributions",
                                 choices = c("Trajectories", "Posterior Distributions", "Group Differences")),
                  conditionalPanel(
                    condition = "input.plot != 'Trace'",
                  
                  conditionalPanel(
                    condition = "input.plot == 'Posterior Distributions'",
-                   selectizeInput("pars", label = "Choose Parameters",
-                                  choices = "")
+                   selectizeInput("pars", label = "Choose Parameters", selected = "Intercept",
+                                  choices = c("Intercept", "Slope", "Event Group", "Slope x Event Group",
+                                              "Level 2 Intercept SD", "Level 2 Slope SD", "Level 2 Intercept-Slope r", "Sigma"))
                  ),
                  checkboxGroupInput("traits3",
                                     "Choose Trait:",
@@ -105,8 +106,8 @@ library(ggridges)
 library(tidyverse)
 
 load(url("https://github.com/emoriebeck/life_events/blob/master/results/mean_diff.RData?raw=true"))
-load(url("https://github.com/emoriebeck/life_events/raw/master/results/selection_samples.RData"))
-load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_samples.RData"))
+# load(url("https://github.com/emoriebeck/life_events/raw/master/results/selection_samples.RData"))
+# load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_samples.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_pred.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/results/plot_files.RData"))
 
@@ -133,9 +134,9 @@ server <- function(input, output, session) {
                              selected = events[1:6])
     updateSelectizeInput(session, 'events4', choices = c(events),
                              selected = events[1])
-    pars <- unique(growth_samples$term)
-    updateSelectizeInput(session, 'pars', choices = c(pars),
-                         selected = pars[1])
+    # pars <- unique(growth_samples$term)
+    # updateSelectizeInput(session, 'pars', choices = c(pars),
+    #                      selected = pars[1])
   })
   
   
@@ -169,6 +170,8 @@ server <- function(input, output, session) {
    })
 
    output$selPlots <- renderPlot({
+     rm(list=ls())
+     load(url("https://github.com/emoriebeck/life_events/raw/master/results/selection_samples.RData"))
      df <- bfi_samples %>% 
        filter(Trait %in% input$traits2 & Event %in% input$events2 & match %in% input$set)
      
@@ -193,6 +196,8 @@ server <- function(input, output, session) {
    })
       
    output$socPlots <- renderPlot({
+     rm(list=ls())
+     load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_samples.RData"))
      if (input$plot == "Posterior Distributions"){
        df <- growth_samples %>% tbl_df %>%
          filter(Trait %in% input$traits3 & Event %in% input$events3 & term %in% input$pars)
@@ -227,23 +232,23 @@ server <- function(input, output, session) {
                legend.title = element_text(face = "bold", size = rel(1.2)),
                strip.text = element_text(face = "bold", size = rel(.8)),
                plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
-     } else if (input$plot == "Trace"){
-       df <- growth_samples %>% tbl_df %>%
-         filter(Trait %in% input$traits4 & Event %in% input$events4) %>%
-         spread(key = term, value = estimate) %>%
-         mutate_if(is.factor, funs(as.integer))
-       
-       mcmc_trace(df, pars = unique(growth_samples$term),
-                  size = .25) +
-         theme_classic() +
-         theme(legend.position = c(.5, .15),
-               legend.direction = "horizontal") +
-         theme(axis.text = element_text(face = "bold"),
-               axis.title = element_text(face = "bold", size = rel(1.2)),
-               legend.text = element_text(face = "bold"),
-               legend.title = element_text(face = "bold", size = rel(1.2)),
-               strip.text = element_text(face = "bold", size = rel(.8)),
-               plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
+     # } else if (input$plot == "Trace"){
+     #   df <- growth_samples %>% tbl_df %>%
+     #     filter(Trait %in% input$traits4 & Event %in% input$events4) %>%
+     #     spread(key = term, value = estimate) %>%
+     #     mutate_if(is.factor, funs(as.integer))
+     #   
+     #   mcmc_trace(df, pars = unique(growth_samples$term),
+     #              size = .25) +
+     #     theme_classic() +
+     #     theme(legend.position = c(.5, .15),
+     #           legend.direction = "horizontal") +
+     #     theme(axis.text = element_text(face = "bold"),
+     #           axis.title = element_text(face = "bold", size = rel(1.2)),
+     #           legend.text = element_text(face = "bold"),
+     #           legend.title = element_text(face = "bold", size = rel(1.2)),
+     #           strip.text = element_text(face = "bold", size = rel(.8)),
+     #           plot.title = element_text(face = "bold", size = rel(1.2), hjust = .5))
      } else {
        color = "gray"
        df.sl <-  slopes %>% filter(shrt_Trait %in% input$traits3 & shrt_Event %in% input$events3) %>% 
