@@ -106,8 +106,8 @@ library(ggridges)
 library(tidyverse)
 
 load(url("https://github.com/emoriebeck/life_events/blob/master/results/mean_diff.RData?raw=true"))
-# load(url("https://github.com/emoriebeck/life_events/raw/master/results/selection_samples.RData"))
-# load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_samples.RData"))
+load(url("https://github.com/emoriebeck/life_events/raw/master/results/selection_samples.RData"))
+load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_samples.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_pred.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/results/plot_files.RData"))
 
@@ -170,8 +170,6 @@ server <- function(input, output, session) {
    })
 
    output$selPlots <- renderPlot({
-     rm(list=ls())
-     load(url("https://github.com/emoriebeck/life_events/raw/master/results/selection_samples.RData"))
      df <- bfi_samples %>% 
        filter(Trait %in% input$traits2 & Event %in% input$events2 & match %in% input$set)
      
@@ -196,8 +194,6 @@ server <- function(input, output, session) {
    })
       
    output$socPlots <- renderPlot({
-     rm(list=ls())
-     load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_samples.RData"))
      if (input$plot == "Posterior Distributions"){
        df <- growth_samples %>% tbl_df %>%
          filter(Trait %in% input$traits3 & Event %in% input$events3 & term %in% input$pars)

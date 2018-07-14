@@ -5,8 +5,8 @@ account: emoriebeck
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 308942
-bundleId: 1478984
+bundleId: 1479010
 url: https://emoriebeck.shinyapps.io/life_events/
-when: 1531486024.87434
+when: 1531486907.89234
 asMultiple: FALSE
 asStatic: FALSE
