@@ -59,10 +59,7 @@ library(ggridges)
 
 data_path <- "~/Box/network/other projects/PCLE Replication"
 data_path <- "https://github.com/emoriebeck/life_events/raw/master"
-data_path <- "C:/Users/PATH Lab/Box/network/other projects/PCLE Replication"
 model_path <- "~/Box/Models/PCLE Replication"
-model_path <- "C:/Users/PATH Lab/Box/Models/PCLE Replication"
-
 ```
 
 
@@ -92,9 +89,9 @@ read_fun <- function(file, year){
     mutate(LE_ParDied = max(LE_MomDied,LE_DadDied, na.rm = T),
            LE_ParDied = ifelse(is.nan(LE_ParDied) == T, NA, LE_ParDied)) %>%
     gather(key = new_name, value = value, -PROC_SID, -PROC_household, -Dem_DOB, -Dem_Sex) %>%
-    left_join(meta %>% filter(Year == year) %>% select(new_name, rev_code)) %>%
-    mutate(value = ifelse(rev_code == 0 | is.na(rev_code), value, 
-                   reverse.code(keys=-1, items=value, mini=1, maxi=8))) %>%
+    left_join(meta %>% filter(Year == year) %>% select(new_name, rev_code)) 
+    mutate(value = ifelse(rev_code == 1 | is.na(rev_code), value,
+                   reverse.code(keys=-1, items=value, mini=1, maxi=7))) %>%
     select(-rev_code)
 }
 
@@ -980,23 +977,42 @@ constrainedVar <- list(
   paste("T3",1:3, sep = "_")
 )
 
-mi_fun <- function(df){
-  df <- data.frame(df)
-  longInvariance(mi.mod, auto=1, constrainAuto=TRUE, strict = T, #group = "le.group",
+mi_fun <- function(trait, event){ 
+  # get the correct data for each chain
+      # df <- bfi.imp %>% filter(chain == 1 & Trait == trait) 
+        df <- bfi_wide %>% filter(Trait == trait)
+      # get event data
+    if(event == "none"){
+      longInvariance(mi.mod, auto=1, constrainAuto=TRUE, strict = T, #group = "le.group",
+                 varList=constrainedVar, data=data.frame(df), missing ="FIML")
+    } else {
+        subs <- unique((nested.psw %>% 
+        filter(match_set == "socialization" & chain == 1 & Event == event) %>%
+          unnest(psw.df))$PROC_SID)
+        df <- df %>% 
+        left_join(le_dat %>% select(Event, PROC_SID, le.group) %>% filter(Event == event)) %>%
+        mutate(le.group = factor(le.group)) %>%
+          filter(PROC_SID %in% subs) %>%
+          data.frame
+    longInvariance(mi.mod, auto=1, constrainAuto=TRUE, strict = T, group = "le.group",
                  varList=constrainedVar, data=df, missing ="FIML")
+      }
 }
 
-mi_nested <- bfi_wide %>% 
-  group_by(Trait) %>%
-  nest() %>%
-  mutate(mi = map(data, possibly(mi_fun, NA_real_)))
+load(url(sprintf("%s/results/psw_small.RData", data_path)))
+load(url(sprintf("%s/results/mi_dat_small.RData", data_path)))
+mi_nested <- 
+  crossing(Trait = c("E", "A", "C", "N", "O"),
+           Event = c("none", unique(le_dat$Event))) %>%
+  filter(!Event %in% c("MomDied", "DadDied")) %>%
+  mutate(mi = map2(Trait, Event, mi_fun))
 ```
 
 Now let's write a short function to extract the terms we need for testing longitudinal invariance.  
 ```{r}
 extract_fun <- function(fit){
   ldply(fit, fitmeasures) %>%
-    select(.id, cfi, rmsea) %>% 
+    select(.id, cfi, rmsea, srmr) %>% 
     mutate_at(vars(cfi, rmsea, srmr), funs(delta = 
       ifelse(.id == "fit.loadings", .[.id == "fit.configural"] - .[.id == "fit.loadings"],
       ifelse(.id == "fit.thresholds", .[.id == "fit.loadings"] - .[.id == "fit.thresholds"],
@@ -1007,7 +1023,23 @@ extract_fun <- function(fit){
 mi_nested <- mi_nested %>%
   mutate(res = map(mi, extract_fun))
 
-mi_nested %>% unnest(res)
+comb <- paste(rep(c("E", "A", "C", "N", "O"), each = 3),
+              rep(c("cfi", "rmsea", "srmr"), times = 5), sep = ".") 
+
+mi_nested %>% unnest(res) %>% filter(.id == "fit.thresholds") %>%
+  select(Trait:srmr) %>%
+  gather(key = measure, value = value, cfi:srmr, na.rm = T) %>%
+  unite(tmp, Trait, measure, sep = ".") %>%
+  mutate(tmp = factor(tmp, levels = comb)) %>%
+  spread(tmp, value) %>%
+  select(-.id) %>%
+  kable(., "html", booktabs = T, escape = F, digits = 2,
+        col.names = c("Event", rep(c("CFI", "RMSEA", "SRMR"), time = 5))) %>%
+  kable_styling(full_width = F) %>%
+  add_header_above(c(" " = 1, "Extraversion" = 3, "Agreeableness" = 3,
+                     "Conscientiousness" = 3, "Emotional Stability" = 3,
+                     "Openness" = 3))
+save(mi_nested, file = sprintf("%s/results/meas_inv.RData", data_path))
 ```
 
 Going with configural invariance: 
