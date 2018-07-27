@@ -1362,7 +1362,8 @@ growth_fun <- function(event, trait, RE, match){
         separate(item, c("wave", "item"), sep = "_") %>%
         mutate(new.wave = as.numeric(mapvalues(wave, c("T1", "T2", "T3"), 0:2))) %>%
         group_by(PROC_SID, new.wave, sex.c, age, age.c, age.c2, age.c3) %>%
-        summarize(value = mean(value, na.rm = T)) 
+        summarize(value = mean(value, na.rm = T))  %>%
+        mutate(weights = 1)
       # get event data
       if(event != "none"){
         df <- df %>% 
@@ -1374,13 +1375,18 @@ growth_fun <- function(event, trait, RE, match){
       subs <- unique((nested.psw %>% 
         filter(match_set == "socialization" & chain == 1 & Event == event) %>%
           unnest(psw.df))$PROC_SID)
-      df <- df %>% filter(PROC_SID %in% subs)
+      df <- df %>% filter(PROC_SID %in% subs) %>% 
+        left_join(nested.psw %>% 
+                    filter(Event == event & match_set == "socialization" & chain == 1) %>% 
+                    unnest(psw.df) %>% 
+                    select(PROC_SID, weights))
     } 
       # set prior
       Prior <-  c(set_prior("cauchy(0,1)", class = "sd"), set_prior("cauchy(0,1)", class = "sigma"))
       # get formula
-      if(RE == "intslope" & event != "none"){f <- value ~ new.wave*le.group + (new.wave|PROC_SID)} 
-      else if (RE == "int" & match == "matched"){f <- value ~ new.wave*le.group + (1|PROC_SID)}
+      if(RE == "intslope" & event != "none" & match == "matched"){f <- value | weights(weights) ~ new.wave*le.group + (new.wave|PROC_SID)} 
+      else if(RE == "intslope" & event != "none" & match != "matched"){f <- value ~ new.wave*le.group + (new.wave|PROC_SID)} 
+      else if (RE == "int" & match == "matched"){f <- value | weights(weights) ~ new.wave*le.group + (1|PROC_SID)}
       else{f <- value ~ new.wave + (new.wave|PROC_SID)}
       # set specifications for models with convergence issues
       if((trait == "A" & event %in% c("ChldMvOut", "MoveIn", "ChldBrth")) | 
