@@ -89,7 +89,7 @@ read_fun <- function(file, year){
     mutate(LE_ParDied = max(LE_MomDied,LE_DadDied, na.rm = T),
            LE_ParDied = ifelse(is.nan(LE_ParDied) == T, NA, LE_ParDied)) %>%
     gather(key = new_name, value = value, -PROC_SID, -PROC_household, -Dem_DOB, -Dem_Sex) %>%
-    left_join(meta %>% filter(Year == year) %>% select(new_name, rev_code)) 
+    left_join(meta %>% filter(Year == year) %>% select(new_name, rev_code)) %>% 
     mutate(value = ifelse(rev_code == 1 | is.na(rev_code), value,
                    reverse.code(keys=-1, items=value, mini=1, maxi=7))) %>%
     select(-rev_code)
@@ -363,8 +363,8 @@ save(match.dat, match.dat.wide, bfi_wide, le_dat, bfi_match,
      file = sprintf("%s/results/data.RData", data_path))
 ```
 
-#Multiple Imputation
-##Missing Data Frame
+# Multiple Imputation
+## Missing Data Frame
 First, we check the missingness patterns of the match data by converting it to a missing data frame class object using the `missing_data.frame()` function in the `mi` package in `R`. We then use the `image()` function to graphically depict the missingness patterns.
 
 ```{r mdf, eval = F}
