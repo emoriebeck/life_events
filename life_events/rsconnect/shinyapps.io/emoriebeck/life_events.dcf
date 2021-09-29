@@ -5,9 +5,10 @@ account: emoriebeck
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 308942
-bundleId: 1492415
+bundleId: 5087190
 url: https://emoriebeck.shinyapps.io/life_events/
-when: 1532133550.60152
+when: 1632954553.58919
+lastSyncTime: 1632954553.5892
 asMultiple: FALSE
 asStatic: FALSE
-ignoredFiles: growth_samples_trim.RData|mean_diff.RData|plot_files.RData|selection_samples_trim.RData
+ignoredFiles: mean_diff.RData|selection_samples_trim.RData

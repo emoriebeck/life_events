@@ -61,7 +61,10 @@ ui <- fluidPage(
              sidebarLayout(
                sidebarPanel(
                  selectInput("plot", label = "Choose Plot Type:", selected = "Posterior Distributions",
-                             choices = c("Trajectories", "Posterior Distributions", "Trace")),#, "Group Differences")),
+                             choices = c("Trajectories"
+                                         , "Posterior Distributions"
+                                         # , "Trace"
+                                         )),#, "Group Differences")),
                  conditionalPanel(
                    condition = "input.plot != 'Trace'",
                  
@@ -83,16 +86,16 @@ ui <- fluidPage(
                                                 "Divorce","PartDied", "DadDied","MomDied","Unemploy","Retire",
                                                 "FrstJob","LeftPar","ParDied"),
                                     selected = c("Married","MoveIn","ChldBrth","ChldMvOut"))
-               ),
-               conditionalPanel(
-                 condition = "input.plot == 'Trace'",
-                 selectInput("traits4", label = "Choose Trait:",
-                                choices = c("E", "A", "C", "N", "O")),
-                 selectInput("event4", label = "Choose Events", selected = "Married",
-                             choices = c("Married","MoveIn","ChldBrth","ChldMvOut","SepPart",
-                                         "Divorce","PartDied", "DadDied","MomDied","Unemploy","Retire",
-                                         "FrstJob","LeftPar","ParDied"))
-               )
+               )#,
+               # conditionalPanel(
+               #   condition = "input.plot == 'Trace'",
+               #   selectInput("traits4", label = "Choose Trait:",
+               #                  choices = c("E", "A", "C", "N", "O")),
+               #   selectInput("event4", label = "Choose Events", selected = "Married",
+               #               choices = c("Married","MoveIn","ChldBrth","ChldMvOut","SepPart",
+               #                           "Divorce","PartDied", "DadDied","MomDied","Unemploy","Retire",
+               #                           "FrstJob","LeftPar","ParDied"))
+               # )
              ),
              mainPanel(
                plotOutput("socPlots"),
@@ -121,6 +124,8 @@ load(url("https://github.com/emoriebeck/life_events/blob/master/results/mean_dif
 load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_samples.RData"))
 # load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_pred.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/results/plot_files.RData"))
+
+range_act <- range_act %>% ungroup()
 
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
