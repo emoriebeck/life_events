@@ -60,7 +60,7 @@ ui <- fluidPage(
     tabPanel("Socialization Effects", 
              sidebarLayout(
                sidebarPanel(
-                 selectInput("plot", label = "Choose Plot Type:", selected = "Posterior Distributions",
+                 selectInput("plot", label = "Choose Plot Type:", selected = "Trajectories",
                              choices = c("Trajectories"
                                          , "Posterior Distributions"
                                          # , "Trace"
@@ -121,7 +121,7 @@ library(tidyverse)
 # load("plot_files.RData")
 load(url("https://github.com/emoriebeck/life_events/blob/master/results/mean_diff.RData?raw=true"))
 # load(url("https://github.com/emoriebeck/life_events/raw/master/results/selection_samples.RData"))
-load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_samples.RData"))
+# load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_samples.RData"))
 # load(url("https://github.com/emoriebeck/life_events/raw/master/results/growth_pred.RData"))
 load(url("https://github.com/emoriebeck/life_events/raw/master/results/plot_files.RData"))
 
@@ -208,8 +208,20 @@ server <- function(input, output, session) {
   
   output$socPlots <- renderPlot({
     if (input$plot == "Posterior Distributions"){
-      df <- growth_samples %>% tbl_df %>%
-        filter( Event %in% input$events3 & term %in% input$pars)
+      loadRData <- function(trait, event, par){
+        file <- url(sprintf("https://github.com/emoriebeck/life_events/raw/master/results/samples/%s_%s.RData", trait, event))
+        load(file)
+        get(ls()[ls()=="post"])
+        post <- post %>% filter(term == par)
+        closeAllConnections()
+        return(post)
+      }
+      df <- crossing(Trait = c("E", "A", "C", "N", "O")
+               , Event = input$events3) %>%
+        mutate(data = pmap(list(Trait, Event, input$pars), loadRData)) %>%
+        unnest(data)
+      # df <- growth_samples %>% tbl_df %>%
+      #   filter( Event %in% input$events3 & term %in% input$pars)
       
       df %>% 
         ggplot(aes(y = Event, x = estimate)) +
